@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes hgFade {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-hgFade { animation: hgFade 0.35s ease both; }
+
+html, body { padding: 0; margin: 0; background: #f1f5f9; }
