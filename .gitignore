@@ -3,4 +3,12 @@ node_modules
 out
 .DS_Store
 *.log
-.env*
+*.tsbuildinfo
+
+# env — keep .env.example committed, ignore real secrets
+.env
+.env.local
+.env*.local
+
+# Prisma generated client
+/src/lib/generated/prisma
