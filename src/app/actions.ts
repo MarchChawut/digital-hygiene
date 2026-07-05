@@ -4,8 +4,12 @@ import { auth } from "@/auth";
 import { isAdmin } from "@/services/auth.service";
 import * as recordService from "@/services/record.service";
 import * as userService from "@/services/user.service";
+import * as surveyService from "@/services/survey.service";
+import * as checklistService from "@/services/checklist.service";
 import { DIVISIONS } from "@/models/division";
 import type { AssessmentRecord, CreateRecordInput } from "@/models/assessment";
+import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers } from "@/models/survey";
+import type { ChecklistItem, ChecklistItemInput } from "@/models/risk";
 
 // Resolve the authenticated user (id + email) or throw. This is the only place
 // that couples the session to logic — services stay session-free (no import cycle).
@@ -45,4 +49,71 @@ export async function clearRecords(): Promise<{ deleted: number }> {
   const user = await requireUser();
   if (!isAdmin(user.email)) throw new Error("Unauthorized");
   return recordService.clearAllRecords();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Satisfaction survey                                                */
+/* ------------------------------------------------------------------ */
+
+export async function getSurveyQuestions(): Promise<SurveyQuestion[]> {
+  await requireUser();
+  return surveyService.listQuestions();
+}
+
+export async function submitSurveyResponse(answers: SurveyAnswers): Promise<void> {
+  const user = await requireUser();
+  await surveyService.createResponse(user.email, answers);
+}
+
+export async function hasSubmittedSurvey(): Promise<boolean> {
+  const user = await requireUser();
+  return surveyService.hasResponded(user.email);
+}
+
+// Admin-only: manage survey questions.
+export async function adminCreateSurveyQuestion(input: SurveyQuestionInput): Promise<SurveyQuestion> {
+  const user = await requireUser();
+  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  return surveyService.createQuestion(input);
+}
+
+export async function adminUpdateSurveyQuestion(
+  id: string,
+  input: Partial<SurveyQuestionInput>
+): Promise<SurveyQuestion> {
+  const user = await requireUser();
+  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  return surveyService.updateQuestion(id, input);
+}
+
+export async function adminDeleteSurveyQuestion(id: string): Promise<void> {
+  const user = await requireUser();
+  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  await surveyService.deleteQuestion(id);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Checklist items                                                    */
+/* ------------------------------------------------------------------ */
+
+// Admin-only: manage checklist items (the main page fetches them server-side).
+export async function adminCreateChecklistItem(input: ChecklistItemInput): Promise<ChecklistItem> {
+  const user = await requireUser();
+  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  return checklistService.createItem(input);
+}
+
+export async function adminUpdateChecklistItem(
+  id: string,
+  input: Partial<ChecklistItemInput>
+): Promise<ChecklistItem> {
+  const user = await requireUser();
+  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  return checklistService.updateItem(id, input);
+}
+
+export async function adminDeleteChecklistItem(id: string): Promise<void> {
+  const user = await requireUser();
+  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  await checklistService.deleteItem(id);
 }

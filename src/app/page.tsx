@@ -1,9 +1,10 @@
 import DigitalHygieneApp from "@/components/DigitalHygieneApp";
 import { auth } from "@/auth";
+import { listItems } from "@/services/checklist.service";
 import type { SessionUser } from "@/models/session";
 
 export default async function Page() {
-  const session = await auth();
+  const [session, checklistItems] = await Promise.all([auth(), listItems()]);
   const user: SessionUser | null = session?.user
     ? {
         email: session.user.email ?? "",
@@ -14,5 +15,5 @@ export default async function Page() {
       }
     : null;
 
-  return <DigitalHygieneApp user={user} />;
+  return <DigitalHygieneApp user={user} checklistItems={checklistItems} />;
 }

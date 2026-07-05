@@ -5,13 +5,16 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { clearRecords } from "@/app/actions";
 import type { AssessmentRecord } from "@/models/assessment";
-import { RISK_DATABASE } from "@/models/risk";
+import type { SurveyQuestion } from "@/models/survey";
+import type { ChecklistItem } from "@/models/risk";
 import { fmtTime, fmtDate, scorePill } from "@/lib/format";
 import { toast } from "sonner";
 import { Download, FolderArchive, ArrowLeft } from "lucide-react";
 
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
+import { SurveyAdmin } from "@/components/SurveyAdmin";
+import { ChecklistAdmin } from "@/components/ChecklistAdmin";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,11 +41,19 @@ import {
 export default function AdminDashboard({
   email,
   initialRecords,
+  initialSurveyQuestions,
+  initialChecklistItems,
 }: {
   email: string;
   initialRecords: AssessmentRecord[];
+  initialSurveyQuestions: SurveyQuestion[];
+  initialChecklistItems: ChecklistItem[];
 }) {
   const [records, setRecords] = useState<AssessmentRecord[]>(initialRecords);
+  const checklistById = useMemo(
+    () => new Map(initialChecklistItems.map((i) => [i.id, i])),
+    [initialChecklistItems]
+  );
 
   const clearData = async () => {
     try {
@@ -64,8 +75,16 @@ export default function AdminDashboard({
     const head = ["ลำดับ", "อีเมลผู้ใช้", "กอง / หน่วยงาน", "วันที่/เวลา", "จำนวนช่องโหว่", "ระดับความเสี่ยง", "รายการช่องโหว่"];
     const body = records
       .map((r, i) => {
-        const items = (r.selectedIds || []).map((id) => RISK_DATABASE[id]?.title ?? id).join(" · ");
-        const cells = [i + 1, r.email, r.division || "-", fmtTime(r.ts), `${r.gaps}/6`, r.scoreLabel, items];
+        const items = (r.selectedIds || []).map((id) => checklistById.get(id)?.title ?? id).join(" · ");
+        const cells = [
+          i + 1,
+          r.email,
+          r.division || "-",
+          fmtTime(r.ts),
+          `${r.gaps}/${initialChecklistItems.length}`,
+          r.scoreLabel,
+          items,
+        ];
         return "<tr>" + cells.map((c) => `<td>${esc(c)}</td>`).join("") + "</tr>";
       })
       .join("");
@@ -102,7 +121,9 @@ export default function AdminDashboard({
     return Object.values(map).sort((a, b) => b.count - a.count);
   }, [records]);
 
-  const critical = records.filter((r) => r.scoreLabel === "วิกฤต").length;
+  // Risky bands: new percent-formula labels + the legacy "วิกฤต" from older records.
+  const RISKY_LABELS = ["วิกฤต", "เสี่ยงสูง", "ยังไม่ปลอดภัย"];
+  const critical = records.filter((r) => RISKY_LABELS.includes(r.scoreLabel)).length;
   const avgGaps = records.length ? (records.reduce((a, r) => a + r.gaps, 0) / records.length).toFixed(1) : "0";
 
   return (
@@ -158,7 +179,7 @@ export default function AdminDashboard({
           {[
             { label: "ผู้ใช้งาน", value: String(users.length), cls: "text-blue-600" },
             { label: "การประเมิน", value: String(records.length), cls: "text-slate-900" },
-            { label: "ระดับวิกฤต", value: String(critical), cls: critical ? "text-red-600" : "text-slate-900" },
+            { label: "เสี่ยงสูง", value: String(critical), cls: critical ? "text-red-600" : "text-slate-900" },
             { label: "ช่องโหว่เฉลี่ย", value: avgGaps, cls: "text-slate-900" },
           ].map((s) => (
             <Card key={s.label} className="rounded-2xl py-0">
@@ -197,7 +218,7 @@ export default function AdminDashboard({
                       <TableCell className="text-slate-500 text-[13px]">{fmtTime(r.ts)}</TableCell>
                       <TableCell className="text-slate-700 font-semibold">
                         {r.gaps}
-                        <span className="text-slate-400">/6</span>
+                        <span className="text-slate-400">/{initialChecklistItems.length}</span>
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className={scorePill(r.scoreLabel)}>
@@ -251,6 +272,9 @@ export default function AdminDashboard({
             <div className="text-center py-10 text-slate-400 text-sm">ยังไม่มีผู้ใช้งาน</div>
           )}
         </Card>
+
+        <ChecklistAdmin initialItems={initialChecklistItems} />
+        <SurveyAdmin initialQuestions={initialSurveyQuestions} />
       </main>
 
       <BottomNav current="admin" />

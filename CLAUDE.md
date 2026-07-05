@@ -48,9 +48,12 @@ the protected parent directory. Workarounds, in order of preference:
 ## Architecture
 
 **Full-stack** Next.js 16 (App Router) + React 19 + TypeScript, **all code under `src/`** (alias
-`@/*` → `./src/*`). UI is **shadcn/ui** (Base UI primitives, not Radix — buttons/triggers use a
-`render` prop, not `asChild`) on **Tailwind CSS v4** (CSS-first — no `tailwind.config.js`). Data lives
-in **MariaDB 10** (DB name `digital-hygiene`) via **Prisma 7** + `@prisma/adapter-mariadb`.
+`@/*` → `./src/*`). UI is **shadcn/ui** on **mixed primitives**: `Dialog` + `Select` are **Radix**
+(`@radix-ui/react-dialog`/`-select`, `asChild` composition); the rest (`AlertDialog`, `Checkbox`,
+`Accordion`, …) are **Base UI** (`@base-ui/react`, `render` prop, not `asChild`) — check which library
+a `ui/*` file imports before assuming its API. Styling is **Tailwind CSS v4** (CSS-first — no
+`tailwind.config.js`). Data lives in **MariaDB 10** (DB name `digital-hygiene`) via **Prisma 7** +
+`@prisma/adapter-mariadb`.
 
 **Layered:** `models → services → app(actions/routes) → components`.
 - `src/models/*` — domain types + constant data (`assessment`, `session`, `division`, `risk`).
@@ -75,7 +78,19 @@ Wiring: `src/auth.config.ts` (edge-safe: Google provider + optional domain gate)
 
 **Admin backoffice is restricted to two emails** (`chawut.sa@gmail.com`, `kornwalairathwork@gmail.com` —
 `ADMIN_EMAILS` env, with the same pair as the built-in default). Enforced in 3 places: the `/admin` route
-redirect, the `/admin` nav link visibility, and the `clearRecords` action.
+redirect, the `/admin` nav link visibility, and admin-only actions (`clearRecords`,
+`adminCreateSurveyQuestion`/`adminUpdateSurveyQuestion`/`adminDeleteSurveyQuestion`).
+
+**Checklist grouping + gating:** the 6 `RISK_DATABASE` entries each carry a `groupId` (see
+`src/models/activity-group.ts` for the 4 groups: cleanup/security/footprint/backup) rendered as themed
+sections in `DigitalHygieneApp.tsx` (colors/icons in `src/lib/theme.ts`). The "เริ่มการวิเคราะห์" button is
+disabled until every group has at least one checked item (`groupComplete`/`allGroupsComplete`); the
+analysis result renders in a `Dialog` (not inline), chaining into `SatisfactionSurveyDialog` afterward
+unless the user already has a `SurveyResponse` (`hasSubmittedSurvey`).
+
+**Satisfaction survey:** `SurveyQuestion` rows are admin-editable (`SurveyAdmin.tsx`, mounted in
+`AdminDashboard.tsx`) with a `type` of `"rating"` (1-5) or `"text"`. `survey.service.listQuestions()`
+self-seeds 5 defaults the first time the table is empty — no separate seed script.
 
 For a full domain-model + setup reference, see `CODEBASE-MAP.md`.
 
@@ -92,3 +107,8 @@ For a full domain-model + setup reference, see `CODEBASE-MAP.md`.
 - UI text and domain content are in **Thai**; code identifiers are in English.
 - Tailwind is **v4**: styling tokens live in `app/globals.css` (`@theme`), `--font-sans` is IBM Plex
   Sans Thai, and `postcss.config.js` uses `@tailwindcss/postcss`.
+- **`Dialog`/`AlertDialog` content never appears in raw SSR HTML (curl)**, even with `open` forced true —
+  both Radix (`Dialog`) and Base UI (`AlertDialog`) portal their popups client-side after hydration, so
+  they only render in a real browser. To verify modal content, use **headless Chrome**
+  (`google-chrome --headless=new --disable-gpu --dump-dom` / `--screenshot`, not just `curl`), which runs
+  real client JS.

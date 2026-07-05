@@ -84,3 +84,45 @@ model AssessmentRecord {
   @@index([email])
   @@index([createdAt])
 }
+
+// Admin-managed satisfaction survey question. type is "rating" (1-5) or "text" (free text).
+model SurveyQuestion {
+  id        String   @id @default(cuid())
+  order     Int      @default(0)
+  text      String
+  type      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+}
+
+// One user's set of answers to the satisfaction survey.
+model SurveyResponse {
+  id        String   @id @default(cuid())
+  email     String
+  // questionId -> answer (number for "rating", string for "text") — stored as JSON,
+  // same reasoning as AssessmentRecord.selectedIds (no scalar map type in MariaDB).
+  answers   Json
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
+
+// Admin-managed checklist item shown on the main assessment page, grouped by
+// one of the 4 fixed ACTIVITY_GROUPS (@/models/activity-group) via groupId.
+model ChecklistItem {
+  id        String   @id @default(cuid())
+  order     Int      @default(0)
+  groupId   String
+  category  String
+  title     String
+  severity  String
+  impact    String   @db.Text
+  action    String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+  @@index([groupId])
+}

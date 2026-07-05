@@ -1,10 +1,13 @@
 // Presentational helpers — client-safe (pure functions returning labels / Tailwind classes).
 
-export function scoreFor(count: number) {
-  if (count === 0) return { label: "ปลอดภัย", text: "text-emerald-600", bg: "bg-emerald-50" };
-  if (count <= 2) return { label: "ความเสี่ยงต่ำ", text: "text-amber-600", bg: "bg-amber-50" };
-  if (count <= 4) return { label: "ความเสี่ยงสูง", text: "text-orange-600", bg: "bg-orange-50" };
-  return { label: "วิกฤต", text: "text-red-600", bg: "bg-red-50" };
+// Bands for the 0-100% safety score (higher = safer): each activity group splits
+// 100 points evenly, each item earns an equal share of its group's points when done.
+export function scoreFor(percent: number) {
+  if (percent >= 100) return { label: "ปลอดภัยสูงสุด", text: "text-emerald-600", bg: "bg-emerald-50" };
+  if (percent >= 71) return { label: "ปลอดภัยดี", text: "text-green-600", bg: "bg-green-50" };
+  if (percent >= 41) return { label: "ปลอดภัยปานกลาง", text: "text-amber-600", bg: "bg-amber-50" };
+  if (percent > 0) return { label: "เสี่ยงสูง", text: "text-orange-600", bg: "bg-orange-50" };
+  return { label: "ยังไม่ปลอดภัย", text: "text-red-600", bg: "bg-red-50" };
 }
 
 export function fmtTime(ts: number) {
@@ -26,12 +29,19 @@ export const severityBadge = (severity: string) =>
     ? "border-orange-200 text-orange-600 bg-orange-50"
     : "border-amber-200 text-amber-600 bg-amber-50";
 
+// Covers both the current percent-band labels and the legacy labels still stored
+// on records created before the percentage formula (ปลอดภัย/ความเสี่ยงต่ำ/…/วิกฤต).
 export const scorePill = (label: string) => {
   switch (label) {
+    case "ปลอดภัยสูงสุด":
     case "ปลอดภัย":
       return "text-emerald-600 bg-emerald-50 border-emerald-200";
+    case "ปลอดภัยดี":
+      return "text-green-600 bg-green-50 border-green-200";
+    case "ปลอดภัยปานกลาง":
     case "ความเสี่ยงต่ำ":
       return "text-amber-600 bg-amber-50 border-amber-200";
+    case "เสี่ยงสูง":
     case "ความเสี่ยงสูง":
       return "text-orange-600 bg-orange-50 border-orange-200";
     default:
