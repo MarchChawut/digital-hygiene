@@ -427,7 +427,11 @@ export default function DigitalHygieneApp({
                       คะแนนความปลอดภัย <span className="font-bold text-slate-900">{percent}%</span>
                     </div>
                     <div>
-                      ความเสี่ยงที่ยังเหลือ <span className="font-bold text-slate-900">{riskIds.length}</span> จาก {checklistItems.length} มาตรการหลัก
+                      ความเสี่ยงที่ยังเหลือ{" "}
+                      <span className="font-bold text-slate-900">
+                        {groupsWithItems.filter((g) => !checkedGroups[g.id]).length}
+                      </span>{" "}
+                      จาก {groupsWithItems.length} มาตรการหลัก
                     </div>
                   </div>
                 </div>
@@ -510,8 +514,8 @@ export default function DigitalHygieneApp({
         </Dialog>
 
         <footer className="py-12 mt-6 border-t border-slate-200 text-center">
-          <p className="text-slate-400 text-sm">© Digital Hygiene &amp; Safety First Initiative</p>
-          <p className="text-slate-300 text-[11px] mt-1.5">Digital wellness self-assessment for cyber awareness</p>
+          <p className="text-slate-400 text-sm">© Digital Hygiene &amp; Safety First</p>
+          <p className="text-slate-300 text-[11px] mt-1.5">ล้างเครื่องให้ใส ใส่ใจภูมิคุ้มกันดิจิทัล</p>
         </footer>
       </main>
 
