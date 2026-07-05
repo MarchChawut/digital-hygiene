@@ -2,8 +2,8 @@
 // organized into (each ChecklistItem belongs to exactly one, via groupId).
 export const ACTIVITY_GROUPS = [
   { id: "cleanup", label: "Digital Cleanup" },
-  { id: "security", label: "Security First" },
-  { id: "footprint", label: "Footprint Cleanup" },
+  { id: "security", label: "Digital Auto Disconnect" },
+  { id: "footprint", label: "Digital Footprint Cleanup" },
   { id: "backup", label: "Digital Backup" },
 ] as const;
 

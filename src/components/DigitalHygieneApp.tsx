@@ -9,7 +9,7 @@ import { DIVISIONS } from "@/models/division";
 import type { SessionUser } from "@/models/session";
 import type { SurveyQuestion } from "@/models/survey";
 import type { ChecklistItem } from "@/models/risk";
-import { ACTIVITY_GROUPS } from "@/models/activity-group";
+import { ACTIVITY_GROUPS, type GroupId } from "@/models/activity-group";
 import { GROUP_THEME } from "@/lib/theme";
 import { scoreFor, severityBadge } from "@/lib/format";
 import { toast } from "sonner";
@@ -25,6 +25,7 @@ import {
   Wifi,
   CloudUpload,
   CheckCircle2,
+  BookOpen,
 } from "lucide-react";
 
 import { TopBar } from "@/components/TopBar";
@@ -81,7 +82,10 @@ export default function DigitalHygieneApp({
 }) {
   const router = useRouter();
 
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Checking happens at the group ("หัวข้อใหญ่") level only — the categories/items
+  // underneath are informational, each with an optional "เปิดคู่มือ" step-by-step guide.
+  const [checkedGroups, setCheckedGroups] = useState<Partial<Record<GroupId, boolean>>>({});
+  const [guideItem, setGuideItem] = useState<ChecklistItem | null>(null);
   const [showResult, setShowResult] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -120,8 +124,8 @@ export default function DigitalHygieneApp({
     }
   };
 
-  const toggleTask = (id: string) => {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
+  const toggleGroup = (groupId: GroupId) => {
+    setCheckedGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
     setShowResult(false);
   };
 
@@ -143,39 +147,24 @@ export default function DigitalHygieneApp({
     [checklistItems]
   );
 
-  // Safety score: 100 points split evenly across groups with items; each item earns an
-  // equal share of its group's points when checked (= done). Higher = safer.
+  // Safety score: 100 points split evenly across groups with items, all-or-nothing per
+  // group (checking happens at the group level, not per item). Higher = safer.
   const percent = useMemo(() => {
     if (!groupsWithItems.length) return 0;
     const groupWorth = 100 / groupsWithItems.length;
-    let total = 0;
-    for (const group of groupsWithItems) {
-      const items = checklistItems.filter((i) => i.groupId === group.id);
-      const done = items.filter((i) => selectedIds.includes(i.id)).length;
-      total += groupWorth * (done / items.length);
-    }
-    return Math.round(total);
-  }, [selectedIds, checklistItems, groupsWithItems]);
+    const done = groupsWithItems.filter((g) => checkedGroups[g.id]).length;
+    return Math.round(groupWorth * done);
+  }, [checkedGroups, groupsWithItems]);
 
-  // Unchecked items = risks still open: what the result dialog explains and what gets
-  // stored on the record (gaps/selectedIds keep their historical "ช่องโหว่" meaning).
+  // A group left unchecked means every item in it is still a risk: what the result
+  // dialog explains and what gets stored on the record (gaps/selectedIds keep their
+  // historical "ช่องโหว่" meaning).
   const riskIds = useMemo(
-    () => checklistItems.filter((i) => !selectedIds.includes(i.id)).map((i) => i.id),
-    [checklistItems, selectedIds]
+    () => checklistItems.filter((i) => !checkedGroups[i.groupId]).map((i) => i.id),
+    [checklistItems, checkedGroups]
   );
 
   const score = useMemo(() => scoreFor(percent), [percent]);
-
-  // A group earns its checkmark once every item in it is done.
-  const groupComplete = useMemo(() => {
-    const result: Record<string, boolean> = {};
-    for (const group of groupsWithItems) {
-      result[group.id] = checklistItems
-        .filter((i) => i.groupId === group.id)
-        .every((t) => selectedIds.includes(t.id));
-    }
-    return result;
-  }, [selectedIds, checklistItems, groupsWithItems]);
 
   const runAnalysis = async () => {
     if (isAnalyzing) return;
@@ -335,10 +324,8 @@ export default function DigitalHygieneApp({
                 const theme = GROUP_THEME[group.id];
                 const GroupIcon = theme.icon;
                 const tasks = checklistItems.filter((t) => t.groupId === group.id);
-                const itemWeight =
-                  groupsWithItems.length && tasks.length
-                    ? 100 / groupsWithItems.length / tasks.length
-                    : 0;
+                const groupWorth = groupsWithItems.length ? 100 / groupsWithItems.length : 0;
+                const done = !!checkedGroups[group.id];
                 const categories: { category: string; items: typeof tasks }[] = [];
                 for (const task of tasks) {
                   const existing = categories.find((c) => c.category === task.category);
@@ -350,55 +337,54 @@ export default function DigitalHygieneApp({
                     key={group.id}
                     className={`rounded-2xl border ${theme.sectionBorder} ${theme.sectionBg} p-4 sm:p-5`}
                   >
-                    <div className="flex items-center gap-2.5 mb-3.5">
+                    <label className="flex items-center gap-2.5 mb-3.5 cursor-pointer select-none">
+                      <Checkbox
+                        checked={done}
+                        onCheckedChange={() => tasks.length && toggleGroup(group.id)}
+                        disabled={!tasks.length}
+                      />
                       <div className={`w-8 h-8 rounded-lg ${theme.sectionIconBg} ${theme.sectionIconText} flex items-center justify-center shrink-0`}>
                         <GroupIcon className="w-4.5 h-4.5" />
                       </div>
                       <h3 className={`text-sm font-bold ${theme.sectionTitle} flex items-center gap-1.5`}>
                         {group.label}
-                        {groupComplete[group.id] && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                        <span className="text-[11px] font-semibold text-slate-400">
+                          ({groupWorth.toFixed(0)} คะแนน)
+                        </span>
+                        {done && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
                       </h3>
-                    </div>
+                    </label>
                     {categories.length ? (
                       <Accordion multiple defaultValue={[]}>
-                        {categories.map(({ category, items }) => {
-                          const categoryChecked = items.every((i) => selectedIds.includes(i.id));
-                          return (
-                            <AccordionItem key={category} value={category}>
-                              <AccordionTrigger>
-                                <span className="flex items-center gap-1.5">
-                                  {category}
-                                  {categoryChecked && (
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                                  )}
-                                </span>
-                              </AccordionTrigger>
-                              <AccordionContent>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  {items.map((task) => {
-                                    const sel = selectedIds.includes(task.id);
-                                    return (
-                                      <label
-                                        key={task.id}
-                                        className={`flex items-center gap-3 text-left p-3.5 rounded-xl border-2 bg-white cursor-pointer transition ${
-                                          sel ? "border-blue-500" : "border-transparent hover:border-slate-200"
-                                        }`}
-                                      >
-                                        <Checkbox checked={sel} onCheckedChange={() => toggleTask(task.id)} />
-                                        <span className={`text-sm font-medium ${sel ? "text-blue-900" : "text-slate-600"}`}>
-                                          {task.title}{" "}
-                                          <span className="text-[11px] font-semibold text-slate-400">
-                                            ({itemWeight.toFixed(1)} คะแนน)
-                                          </span>
-                                        </span>
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                              </AccordionContent>
-                            </AccordionItem>
-                          );
-                        })}
+                        {categories.map(({ category, items }) => (
+                          <AccordionItem key={category} value={category}>
+                            <AccordionTrigger>{category}</AccordionTrigger>
+                            <AccordionContent>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {items.map((task) => (
+                                  <div
+                                    key={task.id}
+                                    className="flex items-center justify-between gap-2 text-left p-3.5 rounded-xl border-2 border-transparent bg-white"
+                                  >
+                                    <span className="text-sm font-medium text-slate-600">
+                                      {task.title}
+                                    </span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      className="shrink-0 text-blue-600 hover:text-blue-700"
+                                      onClick={() => setGuideItem(task)}
+                                      aria-label="เปิดคู่มือ"
+                                    >
+                                      <BookOpen className="w-4 h-4" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        ))}
                       </Accordion>
                     ) : (
                       <p className="text-sm text-slate-400 italic">ยังไม่มีรายการตรวจสอบในหมวดนี้</p>
@@ -511,6 +497,17 @@ export default function DigitalHygieneApp({
           questions={surveyQuestions}
           onSubmitted={() => setAlreadyResponded(true)}
         />
+
+        <Dialog open={!!guideItem} onOpenChange={(open) => !open && setGuideItem(null)}>
+          <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{guideItem?.title}</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
+              {guideItem?.guide?.trim() || "ยังไม่มีคู่มือสำหรับข้อนี้"}
+            </p>
+          </DialogContent>
+        </Dialog>
 
         <footer className="py-12 mt-6 border-t border-slate-200 text-center">
           <p className="text-slate-400 text-sm">© Digital Hygiene &amp; Safety First Initiative</p>

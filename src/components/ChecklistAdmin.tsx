@@ -66,6 +66,7 @@ export function ChecklistAdmin({ initialItems }: { initialItems: ChecklistItem[]
   const [severity, setSeverity] = useState<string>(SEVERITY_OPTIONS[0]);
   const [impact, setImpact] = useState("");
   const [action, setAction] = useState("");
+  const [guide, setGuide] = useState("");
   const [saving, setSaving] = useState(false);
 
   const openCreate = (defaultGroupId?: GroupId) => {
@@ -76,6 +77,7 @@ export function ChecklistAdmin({ initialItems }: { initialItems: ChecklistItem[]
     setSeverity(SEVERITY_OPTIONS[0]);
     setImpact("");
     setAction("");
+    setGuide("");
     setFormOpen(true);
   };
 
@@ -87,6 +89,7 @@ export function ChecklistAdmin({ initialItems }: { initialItems: ChecklistItem[]
     setSeverity(item.severity);
     setImpact(item.impact);
     setAction(item.action);
+    setGuide(item.guide);
     setFormOpen(true);
   };
 
@@ -113,6 +116,7 @@ export function ChecklistAdmin({ initialItems }: { initialItems: ChecklistItem[]
           severity,
           impact: impact.trim(),
           action: action.trim(),
+          guide: guide.trim(),
         });
         setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
         toast.success("แก้ไขรายการแล้ว");
@@ -127,6 +131,7 @@ export function ChecklistAdmin({ initialItems }: { initialItems: ChecklistItem[]
           severity,
           impact: impact.trim(),
           action: action.trim(),
+          guide: guide.trim(),
         };
         const created = await adminCreateChecklistItem(input);
         setItems((prev) => [...prev, created].sort((a, b) => a.order - b.order));
@@ -299,6 +304,10 @@ export function ChecklistAdmin({ initialItems }: { initialItems: ChecklistItem[]
             <div className="space-y-2">
               <Label htmlFor="checklist-action">แนวทางแก้ไข (Action)</Label>
               <Textarea id="checklist-action" value={action} onChange={(e) => setAction(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="checklist-guide">คู่มือ/ขั้นตอนการทำ (ไม่บังคับ)</Label>
+              <Textarea id="checklist-guide" value={guide} onChange={(e) => setGuide(e.target.value)} />
             </div>
           </div>
           <DialogFooter>
