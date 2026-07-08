@@ -8,7 +8,16 @@ import { authConfig } from "@/auth.config";
 export const { handlers, auth, signIn, signOut } = NextAuth({
   // The Prisma 7 generated client is structurally compatible with the adapter.
   adapter: PrismaAdapter(prisma as unknown as PrismaClient),
-  session: { strategy: "database" },
+  session: {
+    strategy: "database",
+    // Idle sessions expire after 1 hour so a stale tab/old cookie doesn't silently
+    // resume as logged in — re-authenticating with Google/Facebook is required after
+    // that. updateAge is kept short relative to maxAge so continuous active use
+    // (picking a division, doing the assessment) keeps extending the session and
+    // isn't interrupted mid-flow.
+    maxAge: 60 * 60, // 1 hour
+    updateAge: 5 * 60, // refresh the expiry every 5 minutes of activity
+  },
   ...authConfig,
   callbacks: {
     ...authConfig.callbacks,

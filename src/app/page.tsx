@@ -3,8 +3,16 @@ import { auth } from "@/auth";
 import { listItems } from "@/services/checklist.service";
 import type { SessionUser } from "@/models/session";
 
-export default async function Page() {
-  const [session, checklistItems] = await Promise.all([auth(), listItems()]);
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const [session, checklistItems, { error }] = await Promise.all([
+    auth(),
+    listItems(),
+    searchParams,
+  ]);
   const user: SessionUser | null = session?.user
     ? {
         email: session.user.email ?? "",
@@ -15,5 +23,5 @@ export default async function Page() {
       }
     : null;
 
-  return <DigitalHygieneApp user={user} checklistItems={checklistItems} />;
+  return <DigitalHygieneApp user={user} checklistItems={checklistItems} authError={error ?? null} />;
 }

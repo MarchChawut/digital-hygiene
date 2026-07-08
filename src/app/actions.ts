@@ -14,7 +14,16 @@ import type { ChecklistItem, ChecklistItemInput } from "@/models/risk";
 // Resolve the authenticated user (id + email) or throw. This is the only place
 // that couples the session to logic — services stay session-free (no import cycle).
 async function requireUser() {
-  const session = await auth();
+  let session;
+  try {
+    session = await auth();
+  } catch {
+    // auth() throwing (vs. cleanly resolving with no session) is the signature of a
+    // transient DB connection hiccup (e.g. Tailscale VPN latency) — retry once before
+    // giving up, since retrying a genuinely missing session wouldn't help anyway.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    session = await auth();
+  }
   if (!session?.user?.id || !session.user.email) {
     throw new Error("Unauthenticated");
   }
@@ -22,8 +31,17 @@ async function requireUser() {
 }
 
 // Set the current user's division (the one-time gate after first sign-in).
-export async function setDivision(division: string): Promise<{ ok: true }> {
-  const user = await requireUser();
+// A missing/expired session is returned as a typed result (not thrown) so the
+// client can distinguish "please sign in again" from an unexpected failure.
+export async function setDivision(
+  division: string
+): Promise<{ ok: true } | { ok: false; reason: "unauthenticated" }> {
+  let user;
+  try {
+    user = await requireUser();
+  } catch {
+    return { ok: false, reason: "unauthenticated" };
+  }
   if (!DIVISIONS.includes(division as (typeof DIVISIONS)[number])) {
     throw new Error("Invalid division");
   }
@@ -32,8 +50,15 @@ export async function setDivision(division: string): Promise<{ ok: true }> {
 }
 
 // Save one submission. email + division come from the session, not the client.
-export async function createRecord(input: CreateRecordInput): Promise<AssessmentRecord> {
-  const user = await requireUser();
+export async function createRecord(
+  input: CreateRecordInput
+): Promise<AssessmentRecord | { ok: false; reason: "unauthenticated" }> {
+  let user;
+  try {
+    user = await requireUser();
+  } catch {
+    return { ok: false, reason: "unauthenticated" };
+  }
   if (!user.division) throw new Error("Division not set");
   return recordService.createRecord({
     email: user.email,

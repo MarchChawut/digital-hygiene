@@ -73,14 +73,40 @@ function GoogleIcon({ className }: { className?: string }) {
   );
 }
 
+function FacebookIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" aria-hidden>
+      <path
+        fill="#1877F2"
+        d="M22 12.06C22 6.51 17.52 2 12 2S2 6.51 2 12.06c0 5.02 3.66 9.18 8.44 9.94v-7.03H7.9v-2.91h2.54V9.85c0-2.5 1.49-3.89 3.77-3.89 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.77-1.63 1.56v1.88h2.78l-.44 2.91h-2.34V22c4.78-.76 8.44-4.92 8.44-9.94Z"
+      />
+    </svg>
+  );
+}
+
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  OAuthAccountNotLinked:
+    "อีเมลนี้เคยเข้าสู่ระบบด้วยผู้ให้บริการอื่นแล้ว กรุณาใช้ผู้ให้บริการเดิม",
+  FacebookNoEmail:
+    "บัญชี Facebook นี้ไม่ได้ให้สิทธิ์อีเมลกับระบบ กรุณาเข้าสู่ระบบใหม่และอนุญาตสิทธิ์อีเมล หรือใช้ Google แทน",
+};
+
 export default function DigitalHygieneApp({
   user,
   checklistItems,
+  authError,
 }: {
   user: SessionUser | null;
   checklistItems: ChecklistItem[];
+  authError?: string | null;
 }) {
   const router = useRouter();
+
+  useEffect(() => {
+    if (!authError) return;
+    toast.error(AUTH_ERROR_MESSAGES[authError] ?? "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+    router.replace("/");
+  }, [authError, router]);
 
   // Checking happens at the group ("หัวข้อใหญ่") level only — the categories/items
   // underneath are informational, each with an optional "เปิดคู่มือ" step-by-step guide.
@@ -116,10 +142,20 @@ export default function DigitalHygieneApp({
     if (!divisionChoice) return;
     setSavingDivision(true);
     try {
-      await setDivision(divisionChoice);
+      const result = await setDivision(divisionChoice);
+      if (!result.ok) {
+        toast.error("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง");
+        // A refresh alone isn't enough here — a structurally-broken session (a valid
+        // Session row but missing user data, e.g. an old Facebook login with no email)
+        // would just re-render this same gate forever. Force a real sign-out so the
+        // next render is genuinely signed-out and recoverable.
+        await signOut({ callbackUrl: "/" });
+        return;
+      }
       router.refresh(); // re-reads session → division now set → main app
     } catch {
       toast.error("ไม่สามารถบันทึกกอง/หน่วยงานได้ กรุณาลองใหม่");
+    } finally {
       setSavingDivision(false);
     }
   };
@@ -172,11 +208,18 @@ export default function DigitalHygieneApp({
     try {
       // The record stores the risks (unchecked items), not the completed ones —
       // same meaning gaps/selectedIds have always had in the DB.
-      await createRecord({
+      const result = await createRecord({
         gaps: riskIds.length,
         scoreLabel: score.label,
         selectedIds: riskIds,
       });
+      if ("ok" in result && !result.ok) {
+        toast.error("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง");
+        // See confirmDivision — force a real sign-out rather than just refreshing,
+        // since a structurally-broken session won't clear on its own.
+        await signOut({ callbackUrl: "/" });
+        return;
+      }
       setShowResult(true);
     } catch {
       toast.error("ไม่สามารถบันทึกผลการประเมินได้ กรุณาลองใหม่");
@@ -202,10 +245,10 @@ export default function DigitalHygieneApp({
               </div>
               <CardTitle className="text-2xl font-extrabold">เข้าสู่ระบบ</CardTitle>
               <CardDescription className="leading-relaxed">
-                เข้าสู่ระบบด้วยบัญชี Google ของคุณ เพื่อเริ่มการประเมินสุขอนามัยดิจิทัลและบันทึกผลลัพธ์
+                เข้าสู่ระบบเพื่อเริ่มการประเมินสุขอนามัยดิจิทัลและบันทึกผลลัพธ์
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col gap-3">
               <Button
                 onClick={() => signIn("google", { callbackUrl: "/" })}
                 variant="outline"
@@ -215,8 +258,22 @@ export default function DigitalHygieneApp({
                 <GoogleIcon />
                 เข้าสู่ระบบด้วย Google
               </Button>
+              <Button
+                onClick={() => signIn("facebook", { callbackUrl: "/" })}
+                variant="outline"
+                size="lg"
+                className="w-full gap-3"
+              >
+                <FacebookIcon />
+                เข้าสู่ระบบด้วย Facebook
+              </Button>
             </CardContent>
           </Card>
+          <p className="mt-4 text-center text-xs text-slate-400">
+            <Link href="/privacy" className="underline hover:text-slate-600">
+              นโยบายความเป็นส่วนตัว
+            </Link>
+          </p>
         </main>
       </div>
     );

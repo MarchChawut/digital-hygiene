@@ -11,7 +11,20 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient() {
-  const adapter = new PrismaMariaDb(connectionString);
+  const url = new URL(connectionString);
+  const adapter = new PrismaMariaDb({
+    host: url.hostname,
+    port: Number(url.port) || 3306,
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    database: url.pathname.replace(/^\//, ""),
+    // Default connectTimeout (1s) is too tight when the DB is reached over a
+    // Tailscale VPN hop — occasional latency spikes were being misreported as
+    // "session expired" further up the stack (auth.ts's session lookup). Give
+    // it more headroom.
+    connectTimeout: 10_000,
+    acquireTimeout: 15_000,
+  });
   return new PrismaClient({ adapter });
 }
 
