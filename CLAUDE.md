@@ -14,7 +14,8 @@ pnpm dlx prisma migrate deploy  # apply migrations to the DB (migrate dev while 
 pnpm dev            # dev server (Turbopack), http://localhost:3003  (port fixed to match the Google redirect URI)
 pnpm build          # production build (Turbopack) — see caveat below
 pnpm build:webpack  # production build with Webpack (fallback)
-pnpm start          # serve the production build
+pnpm start          # serve the production build, http://localhost:3006 (port fixed to match this
+                    # deployment's Cloudflare Tunnel ingress config on the Synology host)
 pnpm lint           # ESLint (eslint .)
 ```
 
