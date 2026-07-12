@@ -1,6 +1,6 @@
 // Presentational helper — client-safe. Maps each activity group (@/models/activity-group)
-// to its icon + Tailwind color classes. Color language is derived from the reference
-// posters (public/2-5-7.png): indigo=Cleanup, orange=Security, amber=Footprint, sky=Backup.
+// to its icon + Tailwind color classes. Color language: indigo=Cleanup,
+// orange=Security, amber=Footprint, sky=Backup.
 import { Eraser, ShieldAlert, Fingerprint, CloudUpload, type LucideIcon } from "lucide-react";
 import type { GroupId } from "@/models/activity-group";
 

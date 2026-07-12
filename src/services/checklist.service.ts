@@ -316,12 +316,19 @@ function toModel(row: {
 }
 
 // Re-seeds if an admin empties the catalogue entirely — same self-seed
-// contract as survey.service.ts's ensureDefaultQuestions.
+// contract as survey.service.ts's ensureDefaultQuestions. Once confirmed
+// non-empty, skip the count() check on every subsequent listItems() call for
+// the life of this server process — deleteItem() resets this flag so a
+// full-catalogue deletion still re-seeds.
+let seeded = false;
+
 async function ensureDefaultItems(): Promise<void> {
+  if (seeded) return;
   const count = await prisma.checklistItem.count();
   if (count === 0) {
     await prisma.checklistItem.createMany({ data: DEFAULT_ITEMS });
   }
+  seeded = true;
 }
 
 export async function listItems(): Promise<ChecklistItem[]> {
@@ -347,4 +354,5 @@ export async function updateItem(
 
 export async function deleteItem(id: string): Promise<void> {
   await prisma.checklistItem.delete({ where: { id } });
+  seeded = false;
 }

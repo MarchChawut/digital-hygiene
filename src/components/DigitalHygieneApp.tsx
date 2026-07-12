@@ -2,9 +2,10 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { signIn, signOut } from "next-auth/react";
-import { createRecord, setDivision, getSurveyQuestions, hasSubmittedSurvey } from "@/app/actions";
+import { createRecord, setDivision } from "@/app/actions";
 import { DIVISIONS } from "@/models/division";
 import type { SessionUser } from "@/models/session";
 import type { SurveyQuestion } from "@/models/survey";
@@ -26,12 +27,13 @@ import {
   CloudUpload,
   CheckCircle2,
   BookOpen,
+  Mail,
 } from "lucide-react";
 
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
-import { SatisfactionSurveyDialog } from "@/components/SatisfactionSurveyDialog";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -62,6 +64,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
+// Both dialogs are gated behind sign-in (+ division selection, for the survey
+// one) — code-split them out of the initial bundle since a first-time visitor
+// is never going to need their JS on first paint.
+const SatisfactionSurveyDialog = dynamic(() =>
+  import("@/components/SatisfactionSurveyDialog").then((m) => m.SatisfactionSurveyDialog)
+, { ssr: false });
+const DataRetentionNoticeDialog = dynamic(() =>
+  import("@/components/DataRetentionNoticeDialog").then((m) => m.DataRetentionNoticeDialog)
+, { ssr: false });
+
 function GoogleIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" width="18" height="18" aria-hidden>
@@ -73,32 +85,27 @@ function GoogleIcon({ className }: { className?: string }) {
   );
 }
 
-function FacebookIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" width="18" height="18" aria-hidden>
-      <path
-        fill="#1877F2"
-        d="M22 12.06C22 6.51 17.52 2 12 2S2 6.51 2 12.06c0 5.02 3.66 9.18 8.44 9.94v-7.03H7.9v-2.91h2.54V9.85c0-2.5 1.49-3.89 3.77-3.89 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.77-1.63 1.56v1.88h2.78l-.44 2.91h-2.34V22c4.78-.76 8.44-4.92 8.44-9.94Z"
-      />
-    </svg>
-  );
-}
-
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   OAuthAccountNotLinked:
     "อีเมลนี้เคยเข้าสู่ระบบด้วยผู้ให้บริการอื่นแล้ว กรุณาใช้ผู้ให้บริการเดิม",
-  FacebookNoEmail:
-    "บัญชี Facebook นี้ไม่ได้ให้สิทธิ์อีเมลกับระบบ กรุณาเข้าสู่ระบบใหม่และอนุญาตสิทธิ์อีเมล หรือใช้ Google แทน",
+  Verification:
+    "ลิงก์ยืนยันตัวตนหมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบด้วยอีเมลอีกครั้งเพื่อรับลิงก์ใหม่",
 };
 
 export default function DigitalHygieneApp({
   user,
   checklistItems,
   authError,
+  initialSurveyQuestions,
+  initialAlreadyResponded,
+  initialShowRetentionNotice,
 }: {
   user: SessionUser | null;
   checklistItems: ChecklistItem[];
   authError?: string | null;
+  initialSurveyQuestions: SurveyQuestion[];
+  initialAlreadyResponded: boolean;
+  initialShowRetentionNotice: boolean;
 }) {
   const router = useRouter();
 
@@ -119,24 +126,43 @@ export default function DigitalHygieneApp({
   const [divisionChoice, setDivisionChoice] = useState("");
   const [savingDivision, setSavingDivision] = useState(false);
 
-  // satisfaction survey — chained after the analysis modal, skipped once already answered
-  const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>([]);
-  const [alreadyResponded, setAlreadyResponded] = useState(true);
+  // guest (email magic-link) sign-in
+  const [guestEmail, setGuestEmail] = useState("");
+  const [guestStatus, setGuestStatus] = useState<"idle" | "sending" | "sent">("idle");
+
+  // satisfaction survey — chained after the analysis modal, skipped once already
+  // answered. Seeded server-side (page.tsx) instead of fetched here, so there's
+  // no post-hydration round trip. router.refresh() after confirmDivision/survey
+  // submit re-renders the server component and supplies fresh props.
+  const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>(initialSurveyQuestions);
+  const [alreadyResponded, setAlreadyResponded] = useState(initialAlreadyResponded);
   const [showSurvey, setShowSurvey] = useState(false);
+
+  // data-retention notice — shown once right after sign-in, before or alongside
+  // the division gate. Also seeded server-side, persisted via a DB column (not
+  // localStorage).
+  const [showRetentionNotice, setShowRetentionNotice] = useState(initialShowRetentionNotice);
 
   const email = user?.email ?? "";
   const division = user?.division ?? "";
   const admin = user?.isAdmin ?? false;
 
-  useEffect(() => {
-    if (!division) return;
-    getSurveyQuestions()
-      .then(setSurveyQuestions)
-      .catch(() => setSurveyQuestions([]));
-    hasSubmittedSurvey()
-      .then(setAlreadyResponded)
-      .catch(() => setAlreadyResponded(true));
-  }, [division]);
+  const submitGuestEmail = async () => {
+    if (!guestEmail.trim() || guestStatus === "sending") return;
+    setGuestStatus("sending");
+    try {
+      const result = await signIn("resend", { email: guestEmail.trim(), redirect: false });
+      if (result?.error) {
+        toast.error("ไม่สามารถส่งอีเมลยืนยันตัวตนได้ กรุณาตรวจสอบอีเมลและลองใหม่");
+        setGuestStatus("idle");
+        return;
+      }
+      setGuestStatus("sent");
+    } catch {
+      toast.error("ไม่สามารถส่งอีเมลยืนยันตัวตนได้ กรุณาลองใหม่");
+      setGuestStatus("idle");
+    }
+  };
 
   const confirmDivision = async () => {
     if (!divisionChoice) return;
@@ -146,9 +172,9 @@ export default function DigitalHygieneApp({
       if (!result.ok) {
         toast.error("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง");
         // A refresh alone isn't enough here — a structurally-broken session (a valid
-        // Session row but missing user data, e.g. an old Facebook login with no email)
-        // would just re-render this same gate forever. Force a real sign-out so the
-        // next render is genuinely signed-out and recoverable.
+        // Session row but missing user data) would just re-render this same gate
+        // forever. Force a real sign-out so the next render is genuinely signed-out
+        // and recoverable.
         await signOut({ callbackUrl: "/" });
         return;
       }
@@ -232,7 +258,7 @@ export default function DigitalHygieneApp({
   /*  RENDER                                                          */
   /* ================================================================ */
 
-  // 1) Not signed in → Google sign-in
+  // 1) Not signed in → Google or Guest (email link) sign-in
   if (!user) {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
@@ -258,15 +284,50 @@ export default function DigitalHygieneApp({
                 <GoogleIcon />
                 เข้าสู่ระบบด้วย Google
               </Button>
-              <Button
-                onClick={() => signIn("facebook", { callbackUrl: "/" })}
-                variant="outline"
-                size="lg"
-                className="w-full gap-3"
-              >
-                <FacebookIcon />
-                เข้าสู่ระบบด้วย Facebook
-              </Button>
+
+              <div className="relative py-1 text-center">
+                <span className="relative bg-white px-3 text-xs text-slate-400">หรือ</span>
+                <div className="absolute inset-x-0 top-1/2 -z-10 border-t border-slate-200" />
+              </div>
+
+              {guestStatus === "sent" ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  <p className="font-semibold mb-1">ส่งลิงก์ยืนยันแล้ว</p>
+                  <p className="leading-relaxed">
+                    กรุณาตรวจสอบกล่องอีเมลของ <span className="font-medium">{guestEmail}</span>{" "}
+                    (รวมถึงโฟลเดอร์สแปม) และคลิกลิงก์เพื่อเข้าสู่ระบบ
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setGuestStatus("idle")}
+                    className="mt-2 text-xs underline hover:text-emerald-900"
+                  >
+                    ใช้อีเมลอื่น
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <Input
+                    type="email"
+                    placeholder="อีเมลของคุณ"
+                    value={guestEmail}
+                    onChange={(e) => setGuestEmail(e.target.value)}
+                    disabled={guestStatus === "sending"}
+                  />
+                  <Button
+                    onClick={submitGuestEmail}
+                    disabled={!guestEmail.trim() || guestStatus === "sending"}
+                    variant="outline"
+                    size="lg"
+                    className="w-full gap-3"
+                  >
+                    <Mail className="w-4.5 h-4.5" />
+                    {guestStatus === "sending"
+                      ? "กำลังส่งลิงก์ยืนยัน…"
+                      : "เข้าสู่ระบบด้วยอีเมล (Guest)"}
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
           <p className="mt-4 text-center text-xs text-slate-400">
@@ -319,6 +380,10 @@ export default function DigitalHygieneApp({
             </CardContent>
           </Card>
         </main>
+        <DataRetentionNoticeDialog
+          open={showRetentionNotice}
+          onAcknowledged={() => setShowRetentionNotice(false)}
+        />
       </div>
     );
   }
@@ -557,6 +622,11 @@ export default function DigitalHygieneApp({
           onOpenChange={setShowSurvey}
           questions={surveyQuestions}
           onSubmitted={() => setAlreadyResponded(true)}
+        />
+
+        <DataRetentionNoticeDialog
+          open={showRetentionNotice}
+          onAcknowledged={() => setShowRetentionNotice(false)}
         />
 
         <Dialog open={!!guideItem} onOpenChange={(open) => !open && setGuideItem(null)}>

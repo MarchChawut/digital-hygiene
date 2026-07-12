@@ -1,6 +1,24 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Sans_Thai, IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
+
+// Self-hosted via next/font (built at build time, served from our own origin) —
+// no runtime request to fonts.googleapis.com/fonts.gstatic.com, and Next
+// generates a size-adjusted fallback so there's minimal layout shift before
+// the real font loads.
+const plexSansThai = IBM_Plex_Sans_Thai({
+  subsets: ["thai", "latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-plex-thai",
+  display: "swap",
+});
+const plexSans = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "600", "700"],
+  variable: "--font-plex-sans",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Digital Hygiene — Security Checklist",
@@ -9,15 +27,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="th">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;600;700;800&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html lang="th" className={`${plexSansThai.variable} ${plexSans.variable}`}>
       <body className="font-sans">
         {children}
         <Toaster />

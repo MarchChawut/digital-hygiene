@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
-import { clearRecords } from "@/app/actions";
+import { clearRecords, runRetentionCleanupNow } from "@/app/actions";
 import type { AssessmentRecord } from "@/models/assessment";
 import type { SurveyQuestion } from "@/models/survey";
 import type { ChecklistItem } from "@/models/risk";
@@ -55,13 +55,44 @@ export default function AdminDashboard({
     [initialChecklistItems]
   );
 
+  // The submissions table only renders one page of rows at a time (the 30-day
+  // retention sweep bounds long-term growth, but a busy window can still mean
+  // hundreds/thousands of rows) — exportExcel() below still reads the full
+  // `records` array, so the export always contains everything regardless of
+  // what page is currently shown on screen.
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+  const pagedRecords = useMemo(
+    () => records.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
+    [records, currentPage]
+  );
+
   const clearData = async () => {
     try {
       await clearRecords();
       setRecords([]);
+      setPage(0);
       toast.success("ล้างข้อมูลการประเมินทั้งหมดแล้ว");
     } catch {
       toast.error("ไม่สามารถล้างข้อมูลได้");
+    }
+  };
+
+  // Manually run the 30-day cleanup sweep — the sweep also runs automatically
+  // every 24h (src/instrumentation.ts); this is for operator visibility/testing.
+  const runRetentionCleanup = async () => {
+    try {
+      const result = await runRetentionCleanupNow();
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      setRecords((prev) => prev.filter((r) => r.ts >= cutoff));
+      setPage(0);
+      toast.success(
+        `ลบข้อมูลที่เกิน 30 วันแล้ว: ผลการประเมิน ${result.records} รายการ, แบบสอบถาม ${result.surveyResponses} รายการ`
+      );
+    } catch {
+      toast.error("ไม่สามารถรันการลบข้อมูลได้");
     }
   };
 
@@ -153,6 +184,28 @@ export default function AdminDashboard({
             </Button>
             <AlertDialog>
               <AlertDialogTrigger
+                render={<Button variant="outline" className="flex-1 sm:flex-none" />}
+              >
+                รันการลบข้อมูลเกิน 30 วันตอนนี้
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>ต้องการรันการลบข้อมูลที่เกิน 30 วันตอนนี้หรือไม่?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    ระบบจะลบผลการประเมินและคำตอบแบบสอบถามที่บันทึกไว้เกิน 30 วันออกจากฐานข้อมูลอย่างถาวร
+                    (ปกติระบบจะรันการลบนี้โดยอัตโนมัติทุกวันอยู่แล้ว)
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                  <AlertDialogAction onClick={runRetentionCleanup} className="bg-blue-600 hover:bg-blue-700 text-white">
+                    รันการลบ
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <AlertDialog>
+              <AlertDialogTrigger
                 render={<Button variant="outline" className="text-red-600 border-red-200 hover:text-red-700 flex-1 sm:flex-none" />}
               >
                 ล้างข้อมูลทั้งหมด
@@ -211,7 +264,7 @@ export default function AdminDashboard({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {records.map((r) => (
+                  {pagedRecords.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="font-semibold text-slate-900">{r.email}</TableCell>
                       <TableCell className="text-slate-600 text-[13px]">{r.division || "-"}</TableCell>
@@ -230,7 +283,33 @@ export default function AdminDashboard({
                 </TableBody>
               </Table>
             </div>
-          ) : (
+          ) : null}
+          {records.length > PAGE_SIZE ? (
+            <div className="flex items-center justify-between gap-3 px-7 py-4 border-t border-slate-100">
+              <span className="text-xs text-slate-400">
+                หน้า {currentPage + 1} จาก {totalPages}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPage === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                >
+                  ก่อนหน้า
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPage >= totalPages - 1}
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                >
+                  ถัดไป
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {!records.length && (
             <div className="text-center py-14 px-5">
               <FolderArchive className="w-10 h-10 mx-auto mb-3 text-slate-300" />
               <p className="text-slate-700 font-semibold">ยังไม่มีข้อมูลการประเมิน</p>

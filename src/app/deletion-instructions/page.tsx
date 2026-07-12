@@ -23,7 +23,7 @@ export default function DeletionInstructionsPage() {
           <CardContent className="space-y-4 text-sm leading-relaxed text-slate-700">
             <p>
               หากท่านต้องการขอลบข้อมูลส่วนบุคคลที่เกี่ยวข้องกับบัญชีของท่านออกจากระบบ Digital
-              Hygiene (ไม่ว่าจะเข้าสู่ระบบด้วย Google หรือ Facebook) กรุณาติดต่อ:
+              Hygiene (ไม่ว่าจะเข้าสู่ระบบด้วย Google หรือ Guest ผ่านอีเมล) กรุณาติดต่อ:
             </p>
             <p className="font-semibold">{CONTACT}</p>
             <p>

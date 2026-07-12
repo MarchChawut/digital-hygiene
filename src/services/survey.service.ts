@@ -16,11 +16,18 @@ function toModel(row: { id: string; order: number; text: string; type: string })
   return { id: row.id, order: row.order, text: row.text, type: row.type as SurveyQuestion["type"] };
 }
 
+// Once we've confirmed the table is non-empty, skip the count() check on every
+// subsequent listQuestions() call for the life of this server process —
+// deleteQuestion() resets this so a full-catalogue deletion still re-seeds.
+let seeded = false;
+
 async function ensureDefaultQuestions(): Promise<void> {
+  if (seeded) return;
   const count = await prisma.surveyQuestion.count();
   if (count === 0) {
     await prisma.surveyQuestion.createMany({ data: DEFAULT_QUESTIONS });
   }
+  seeded = true;
 }
 
 export async function listQuestions(): Promise<SurveyQuestion[]> {
@@ -44,6 +51,7 @@ export async function updateQuestion(
 
 export async function deleteQuestion(id: string): Promise<void> {
   await prisma.surveyQuestion.delete({ where: { id } });
+  seeded = false;
 }
 
 export async function createResponse(email: string, answers: SurveyAnswers): Promise<void> {

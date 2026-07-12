@@ -28,10 +28,14 @@ DATABASE_URL="mysql://root:root@127.0.0.1:3307/digital-hygiene" pnpm dlx prisma 
 `prisma generate` writes into `lib/generated/prisma` (gitignored) — regenerate after schema changes.
 
 ### Auth (Auth.js v5 / NextAuth) — env required
-Login is **Google OAuth**. Needed env vars (see `.env.example`): `AUTH_SECRET`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `NEXTAUTH_URL="http://localhost:3003"`, optional `ALLOWED_EMAIL_DOMAIN`.
-The Google OAuth client's Authorized redirect URI must be `http://localhost:3003/api/auth/callback/google`
-(hence `pnpm dev` is pinned to port 3003). Provider is auto-checked at `GET /api/auth/providers`.
+Login is **Google OAuth** or **Guest** (passwordless magic-link email via Resend — anyone can sign in
+with a real email address after clicking the verification link sent to it). Needed env vars (see
+`.env.example`): `AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `RESEND_API_KEY`,
+`EMAIL_FROM`, `NEXTAUTH_URL="http://localhost:3003"`, optional `ALLOWED_EMAIL_DOMAIN` (applies to
+Google only — Guest sign-in is intentionally exempt). The Google OAuth client's Authorized redirect
+URI must be `http://localhost:3003/api/auth/callback/google` (hence `pnpm dev` is pinned to port
+3003). Provider is auto-checked at `GET /api/auth/providers`. Submitted assessment/survey data is
+auto-deleted after 30 days by an in-process scheduler (`src/instrumentation.ts` → `src/services/retention.service.ts`).
 
 ### Build caveat (important)
 This project currently lives in `~/Downloads`, a macOS TCC-protected folder. `pnpm build`

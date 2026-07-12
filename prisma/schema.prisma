@@ -19,10 +19,14 @@ model User {
   id            String    @id @default(cuid())
   name          String?
   email         String?   @unique
+  // Set by the adapter once a Guest (Resend magic-link) sign-in is completed;
+  // OAuth providers (Google) don't populate this.
   emailVerified DateTime?
   image         String?
-  // Selected once after first Google sign-in (the division gate). Null = not chosen yet.
+  // Selected once after first sign-in (the division gate). Null = not chosen yet.
   division      String?
+  // Set once the user dismisses the one-time 30-day data-retention notice.
+  retentionNoticeAcknowledgedAt DateTime?
   accounts      Account[]
   sessions      Session[]
 }
@@ -107,6 +111,7 @@ model SurveyResponse {
   createdAt DateTime @default(now())
 
   @@index([email])
+  @@index([createdAt])
 }
 
 // Admin-managed checklist item shown on the main assessment page, grouped by

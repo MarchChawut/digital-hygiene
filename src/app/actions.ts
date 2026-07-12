@@ -6,6 +6,7 @@ import * as recordService from "@/services/record.service";
 import * as userService from "@/services/user.service";
 import * as surveyService from "@/services/survey.service";
 import * as checklistService from "@/services/checklist.service";
+import * as retentionService from "@/services/retention.service";
 import { DIVISIONS } from "@/models/division";
 import type { AssessmentRecord, CreateRecordInput } from "@/models/assessment";
 import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers } from "@/models/survey";
@@ -77,22 +78,34 @@ export async function clearRecords(): Promise<{ deleted: number }> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Satisfaction survey                                                */
+/*  Data retention                                                     */
 /* ------------------------------------------------------------------ */
 
-export async function getSurveyQuestions(): Promise<SurveyQuestion[]> {
-  await requireUser();
-  return surveyService.listQuestions();
+export async function acknowledgeDataRetentionNotice(): Promise<void> {
+  const user = await requireUser();
+  await userService.acknowledgeRetentionNotice(user.id);
 }
+
+// Manually run the 30-day cleanup sweep now — admin only. The sweep also runs
+// automatically on a daily interval (src/instrumentation.ts); this exists for
+// operator visibility/testing.
+export async function runRetentionCleanupNow(): Promise<{
+  records: number;
+  surveyResponses: number;
+  expiredTokens: number;
+}> {
+  const user = await requireUser();
+  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  return retentionService.runRetentionCleanup();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Satisfaction survey                                                */
+/* ------------------------------------------------------------------ */
 
 export async function submitSurveyResponse(answers: SurveyAnswers): Promise<void> {
   const user = await requireUser();
   await surveyService.createResponse(user.email, answers);
-}
-
-export async function hasSubmittedSurvey(): Promise<boolean> {
-  const user = await requireUser();
-  return surveyService.hasResponded(user.email);
 }
 
 // Admin-only: manage survey questions.
