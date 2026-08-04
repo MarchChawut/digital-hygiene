@@ -92,6 +92,10 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
     "ลิงก์ยืนยันตัวตนหมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบด้วยอีเมลอีกครั้งเพื่อรับลิงก์ใหม่",
 };
 
+// Composite key for checkedCategories — pure, no component dependency, so it's
+// hoisted to module scope rather than redefined every render.
+const categoryKey = (groupId: GroupId, category: string) => `${groupId}::${category}`;
+
 export default function DigitalHygieneApp({
   user,
   checklistItems,
@@ -115,9 +119,12 @@ export default function DigitalHygieneApp({
     router.replace("/");
   }, [authError, router]);
 
-  // Checking happens at the group ("หัวข้อใหญ่") level only — the categories/items
-  // underneath are informational, each with an optional "เปิดคู่มือ" step-by-step guide.
-  const [checkedGroups, setCheckedGroups] = useState<Partial<Record<GroupId, boolean>>>({});
+  // Checking happens at the category ("หมวดย่อย") level, keyed by `${groupId}::${category}`
+  // (defensive against two different groups reusing the same category label). Each item still
+  // has an optional "เปิดคู่มือ" step-by-step guide. The group header checkbox is a derived
+  // master checkbox: indeterminate when only some of its categories are checked, and clicking it
+  // bulk-toggles every category underneath.
+  const [checkedCategories, setCheckedCategories] = useState<Record<string, boolean>>({});
   const [guideItem, setGuideItem] = useState<ChecklistItem | null>(null);
   const [showResult, setShowResult] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -186,8 +193,23 @@ export default function DigitalHygieneApp({
     }
   };
 
-  const toggleGroup = (groupId: GroupId) => {
-    setCheckedGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
+  const toggleCategory = (groupId: GroupId, category: string) => {
+    const key = categoryKey(groupId, category);
+    setCheckedCategories((prev) => ({ ...prev, [key]: !prev[key] }));
+    setShowResult(false);
+  };
+
+  // Bulk toggle for the group master checkbox — sets every category under that group to `value`.
+  const toggleGroupBulk = (
+    groupId: GroupId,
+    categories: { category: string }[],
+    value: boolean
+  ) => {
+    setCheckedCategories((prev) => {
+      const next = { ...prev };
+      for (const c of categories) next[categoryKey(groupId, c.category)] = value;
+      return next;
+    });
     setShowResult(false);
   };
 
@@ -209,21 +231,61 @@ export default function DigitalHygieneApp({
     [checklistItems]
   );
 
-  // Safety score: 100 points split evenly across groups with items, all-or-nothing per
-  // group (checking happens at the group level, not per item). Higher = safer.
+  // Group → category → items breakdown, built once and reused both for rendering and for
+  // scoring (a "category" is the accordion sub-item, e.g. "ลบข้อมูลสื่อสาร").
+  const categoriesByGroup = useMemo(() => {
+    const map = new Map<GroupId, { category: string; items: ChecklistItem[] }[]>();
+    for (const group of groupsWithItems) {
+      const tasks = checklistItems.filter((t) => t.groupId === group.id);
+      const categories: { category: string; items: ChecklistItem[] }[] = [];
+      for (const task of tasks) {
+        const existing = categories.find((c) => c.category === task.category);
+        if (existing) existing.items.push(task);
+        else categories.push({ category: task.category, items: [task] });
+      }
+      map.set(group.id, categories);
+    }
+    return map;
+  }, [checklistItems, groupsWithItems]);
+
+  // Every category key across all groups, flattened — used for the "X จาก Y หมวดย่อย" count.
+  const allCategoryKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const [groupId, categories] of categoriesByGroup) {
+      for (const c of categories) keys.push(categoryKey(groupId, c.category));
+    }
+    return keys;
+  }, [categoriesByGroup]);
+
+  // Safety score: 100 points split evenly across groups with items (unchanged — this is the
+  // "(25 คะแนน)" badge shown per group), then split further, evenly, across that group's
+  // categories, and checking happens per category rather than all-or-nothing per group.
+  // Higher = safer.
   const percent = useMemo(() => {
     if (!groupsWithItems.length) return 0;
     const groupWorth = 100 / groupsWithItems.length;
-    const done = groupsWithItems.filter((g) => checkedGroups[g.id]).length;
-    return Math.round(groupWorth * done);
-  }, [checkedGroups, groupsWithItems]);
+    let total = 0;
+    for (const group of groupsWithItems) {
+      const categories = categoriesByGroup.get(group.id) ?? [];
+      if (!categories.length) continue;
+      const categoryWorth = groupWorth / categories.length;
+      const doneCount = categories.filter(
+        (c) => checkedCategories[categoryKey(group.id, c.category)]
+      ).length;
+      total += categoryWorth * doneCount;
+    }
+    return Math.round(total);
+  }, [checkedCategories, groupsWithItems, categoriesByGroup]);
 
-  // A group left unchecked means every item in it is still a risk: what the result
+  // A category left unchecked means every item in it is still a risk: what the result
   // dialog explains and what gets stored on the record (gaps/selectedIds keep their
   // historical "ช่องโหว่" meaning).
   const riskIds = useMemo(
-    () => checklistItems.filter((i) => !checkedGroups[i.groupId]).map((i) => i.id),
-    [checklistItems, checkedGroups]
+    () =>
+      checklistItems
+        .filter((i) => !checkedCategories[categoryKey(i.groupId, i.category)])
+        .map((i) => i.id),
+    [checklistItems, checkedCategories]
   );
 
   const score = useMemo(() => scoreFor(percent), [percent]);
@@ -447,13 +509,12 @@ export default function DigitalHygieneApp({
                 const GroupIcon = theme.icon;
                 const tasks = checklistItems.filter((t) => t.groupId === group.id);
                 const groupWorth = groupsWithItems.length ? 100 / groupsWithItems.length : 0;
-                const done = !!checkedGroups[group.id];
-                const categories: { category: string; items: typeof tasks }[] = [];
-                for (const task of tasks) {
-                  const existing = categories.find((c) => c.category === task.category);
-                  if (existing) existing.items.push(task);
-                  else categories.push({ category: task.category, items: [task] });
-                }
+                const categories = categoriesByGroup.get(group.id) ?? [];
+                const doneCount = categories.filter(
+                  (c) => checkedCategories[categoryKey(group.id, c.category)]
+                ).length;
+                const done = categories.length > 0 && doneCount === categories.length;
+                const indeterminate = doneCount > 0 && doneCount < categories.length;
                 return (
                   <div
                     key={group.id}
@@ -462,7 +523,10 @@ export default function DigitalHygieneApp({
                     <label className="flex items-center gap-2.5 mb-3.5 cursor-pointer select-none">
                       <Checkbox
                         checked={done}
-                        onCheckedChange={() => tasks.length && toggleGroup(group.id)}
+                        indeterminate={indeterminate}
+                        onCheckedChange={() =>
+                          categories.length && toggleGroupBulk(group.id, categories, !done)
+                        }
                         disabled={!tasks.length}
                       />
                       <div className={`w-8 h-8 rounded-lg ${theme.sectionIconBg} ${theme.sectionIconText} flex items-center justify-center shrink-0`}>
@@ -478,35 +542,54 @@ export default function DigitalHygieneApp({
                     </label>
                     {categories.length ? (
                       <Accordion multiple defaultValue={[]}>
-                        {categories.map(({ category, items }) => (
-                          <AccordionItem key={category} value={category}>
-                            <AccordionTrigger>{category}</AccordionTrigger>
-                            <AccordionContent>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {items.map((task) => (
-                                  <div
-                                    key={task.id}
-                                    className="flex items-center justify-between gap-2 text-left p-3.5 rounded-xl border-2 border-transparent bg-white"
-                                  >
-                                    <span className="text-sm font-medium text-slate-600">
-                                      {task.title}
-                                    </span>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      className="shrink-0 text-blue-600 hover:text-blue-700"
-                                      onClick={() => setGuideItem(task)}
-                                      aria-label="เปิดคู่มือ"
+                        {categories.map(({ category, items }) => {
+                          const categoryChecked =
+                            !!checkedCategories[categoryKey(group.id, category)];
+                          return (
+                            <AccordionItem key={category} value={category}>
+                              <AccordionTrigger
+                                leading={
+                                  <Checkbox
+                                    checked={categoryChecked}
+                                    onCheckedChange={() => toggleCategory(group.id, category)}
+                                    aria-label={`ทำเสร็จแล้ว: ${category}`}
+                                  />
+                                }
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  {category}
+                                  {categoryChecked && (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                  )}
+                                </span>
+                              </AccordionTrigger>
+                              <AccordionContent>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  {items.map((task) => (
+                                    <div
+                                      key={task.id}
+                                      className="flex items-center justify-between gap-2 text-left p-3.5 rounded-xl border-2 border-transparent bg-white"
                                     >
-                                      <BookOpen className="w-4 h-4" />
-                                    </Button>
-                                  </div>
-                                ))}
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        ))}
+                                      <span className="text-sm font-medium text-slate-600">
+                                        {task.title}
+                                      </span>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        className="shrink-0 text-blue-600 hover:text-blue-700"
+                                        onClick={() => setGuideItem(task)}
+                                        aria-label="เปิดคู่มือ"
+                                      >
+                                        <BookOpen className="w-4 h-4" />
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </AccordionContent>
+                            </AccordionItem>
+                          );
+                        })}
                       </Accordion>
                     ) : (
                       <p className="text-sm text-slate-400 italic">ยังไม่มีรายการตรวจสอบในหมวดนี้</p>
@@ -551,9 +634,9 @@ export default function DigitalHygieneApp({
                     <div>
                       ความเสี่ยงที่ยังเหลือ{" "}
                       <span className="font-bold text-slate-900">
-                        {groupsWithItems.filter((g) => !checkedGroups[g.id]).length}
+                        {allCategoryKeys.filter((k) => !checkedCategories[k]).length}
                       </span>{" "}
-                      จาก {groupsWithItems.length} มาตรการหลัก
+                      จาก {allCategoryKeys.length} หมวดย่อย
                     </div>
                   </div>
                 </div>
