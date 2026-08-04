@@ -4,6 +4,7 @@ import { isAdmin } from "@/services/auth.service";
 import { listRecords } from "@/services/record.service";
 import { listQuestions } from "@/services/survey.service";
 import { listItems } from "@/services/checklist.service";
+import { listAuditLog } from "@/services/audit.service";
 import AdminDashboard from "@/components/AdminDashboard";
 
 // Backoffice route — server-side gate: only the configured admin emails
@@ -14,10 +15,11 @@ export default async function AdminPage() {
     redirect("/");
   }
 
-  const [records, surveyQuestions, checklistItems] = await Promise.all([
+  const [records, surveyQuestions, checklistItems, auditLog] = await Promise.all([
     listRecords(),
     listQuestions(),
     listItems(),
+    listAuditLog(),
   ]);
   return (
     <AdminDashboard
@@ -25,6 +27,7 @@ export default async function AdminPage() {
       initialRecords={records}
       initialSurveyQuestions={surveyQuestions}
       initialChecklistItems={checklistItems}
+      initialAuditLog={auditLog}
     />
   );
 }

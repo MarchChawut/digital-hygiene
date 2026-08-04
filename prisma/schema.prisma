@@ -134,3 +134,22 @@ model ChecklistItem {
   @@index([order])
   @@index([groupId])
 }
+
+// Security/accountability audit trail for incident response — admin mutations
+// and auth events. Separate from AssessmentRecord's 30-day retention window;
+// swept on its own longer cutoff by retention.service.ts.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorEmail String
+  // e.g. "records.cleared", "checklist_item.created", "auth.signin"
+  action     String
+  // Optional id of the affected entity (survey question id, checklist item id, ...).
+  targetId   String?
+  // Optional structured details (counts, before/after values, provider, ...).
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([actorEmail])
+  @@index([action])
+  @@index([createdAt])
+}

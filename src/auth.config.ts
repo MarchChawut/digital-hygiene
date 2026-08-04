@@ -1,10 +1,13 @@
 import type { NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
 import Resend from "next-auth/providers/resend";
+import { createLogger } from "@/lib/logger";
 
 // Optional org-domain restriction. Set ALLOWED_EMAIL_DOMAIN="thaimooc.ac.th" to only
 // allow that Google Workspace domain; leave it empty to allow any Google account.
 const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN?.trim().toLowerCase() || "";
+
+const log = createLogger("auth");
 
 // Edge-safe config (no Prisma import here) — providers + the sign-in gate.
 // Read either GOOGLE_CLIENT_ID/SECRET (used in this project's .env) or Auth.js's
@@ -38,7 +41,14 @@ export const authConfig = {
       if (account?.provider === "resend") return true;
       if (!ALLOWED_DOMAIN) return true;
       const email = (profile?.email ?? user?.email ?? "").toLowerCase();
-      return email.endsWith("@" + ALLOWED_DOMAIN);
+      const allowed = email.endsWith("@" + ALLOWED_DOMAIN);
+      // No Prisma here (this config must stay edge-safe) — a rejected sign-in
+      // still gets a structured log line; the durable audit row for *accepted*
+      // sign-ins is written from src/auth.ts's events.signIn instead (Node-only).
+      if (!allowed) {
+        log.warn("signin_rejected_domain", { email, provider: account?.provider });
+      }
+      return allowed;
     },
   },
 } satisfies NextAuthConfig;

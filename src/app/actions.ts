@@ -7,10 +7,14 @@ import * as userService from "@/services/user.service";
 import * as surveyService from "@/services/survey.service";
 import * as checklistService from "@/services/checklist.service";
 import * as retentionService from "@/services/retention.service";
+import * as auditService from "@/services/audit.service";
+import { createLogger } from "@/lib/logger";
 import { DIVISIONS } from "@/models/division";
 import type { AssessmentRecord, CreateRecordInput } from "@/models/assessment";
 import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers } from "@/models/survey";
 import type { ChecklistItem, ChecklistItemInput } from "@/models/risk";
+
+const log = createLogger("actions");
 
 // Resolve the authenticated user (id + email) or throw. This is the only place
 // that couples the session to logic — services stay session-free (no import cycle).
@@ -29,6 +33,19 @@ async function requireUser() {
     throw new Error("Unauthenticated");
   }
   return { id: session.user.id, email: session.user.email, division: session.user.division };
+}
+
+// Resolve the authenticated user AND require admin — a non-admin hitting an
+// admin-only action is itself a security-relevant signal, so it's logged
+// (structured log only, not the audit DB — there's no confirmed admin
+// identity to attribute the audit row to) before throwing.
+async function requireAdmin(action: string) {
+  const user = await requireUser();
+  if (!isAdmin(user.email)) {
+    log.warn("unauthorized_attempt", { email: user.email, action });
+    throw new Error("Unauthorized");
+  }
+  return user;
 }
 
 // Set the current user's division (the one-time gate after first sign-in).
@@ -72,9 +89,14 @@ export async function createRecord(
 
 // Delete every submission — admin only.
 export async function clearRecords(): Promise<{ deleted: number }> {
-  const user = await requireUser();
-  if (!isAdmin(user.email)) throw new Error("Unauthorized");
-  return recordService.clearAllRecords();
+  const user = await requireAdmin("records.cleared");
+  const result = await recordService.clearAllRecords();
+  await auditService.recordAudit({
+    actorEmail: user.email,
+    action: "records.cleared",
+    metadata: { deleted: result.deleted },
+  });
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -93,10 +115,16 @@ export async function runRetentionCleanupNow(): Promise<{
   records: number;
   surveyResponses: number;
   expiredTokens: number;
+  auditLogs: number;
 }> {
-  const user = await requireUser();
-  if (!isAdmin(user.email)) throw new Error("Unauthorized");
-  return retentionService.runRetentionCleanup();
+  const user = await requireAdmin("retention.manual_sweep");
+  const result = await retentionService.runRetentionCleanup();
+  await auditService.recordAudit({
+    actorEmail: user.email,
+    action: "retention.manual_sweep",
+    metadata: result,
+  });
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -110,24 +138,38 @@ export async function submitSurveyResponse(answers: SurveyAnswers): Promise<void
 
 // Admin-only: manage survey questions.
 export async function adminCreateSurveyQuestion(input: SurveyQuestionInput): Promise<SurveyQuestion> {
-  const user = await requireUser();
-  if (!isAdmin(user.email)) throw new Error("Unauthorized");
-  return surveyService.createQuestion(input);
+  const user = await requireAdmin("survey_question.created");
+  const question = await surveyService.createQuestion(input);
+  await auditService.recordAudit({
+    actorEmail: user.email,
+    action: "survey_question.created",
+    targetId: question.id,
+  });
+  return question;
 }
 
 export async function adminUpdateSurveyQuestion(
   id: string,
   input: Partial<SurveyQuestionInput>
 ): Promise<SurveyQuestion> {
-  const user = await requireUser();
-  if (!isAdmin(user.email)) throw new Error("Unauthorized");
-  return surveyService.updateQuestion(id, input);
+  const user = await requireAdmin("survey_question.updated");
+  const question = await surveyService.updateQuestion(id, input);
+  await auditService.recordAudit({
+    actorEmail: user.email,
+    action: "survey_question.updated",
+    targetId: id,
+  });
+  return question;
 }
 
 export async function adminDeleteSurveyQuestion(id: string): Promise<void> {
-  const user = await requireUser();
-  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  const user = await requireAdmin("survey_question.deleted");
   await surveyService.deleteQuestion(id);
+  await auditService.recordAudit({
+    actorEmail: user.email,
+    action: "survey_question.deleted",
+    targetId: id,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -136,22 +178,36 @@ export async function adminDeleteSurveyQuestion(id: string): Promise<void> {
 
 // Admin-only: manage checklist items (the main page fetches them server-side).
 export async function adminCreateChecklistItem(input: ChecklistItemInput): Promise<ChecklistItem> {
-  const user = await requireUser();
-  if (!isAdmin(user.email)) throw new Error("Unauthorized");
-  return checklistService.createItem(input);
+  const user = await requireAdmin("checklist_item.created");
+  const item = await checklistService.createItem(input);
+  await auditService.recordAudit({
+    actorEmail: user.email,
+    action: "checklist_item.created",
+    targetId: item.id,
+  });
+  return item;
 }
 
 export async function adminUpdateChecklistItem(
   id: string,
   input: Partial<ChecklistItemInput>
 ): Promise<ChecklistItem> {
-  const user = await requireUser();
-  if (!isAdmin(user.email)) throw new Error("Unauthorized");
-  return checklistService.updateItem(id, input);
+  const user = await requireAdmin("checklist_item.updated");
+  const item = await checklistService.updateItem(id, input);
+  await auditService.recordAudit({
+    actorEmail: user.email,
+    action: "checklist_item.updated",
+    targetId: id,
+  });
+  return item;
 }
 
 export async function adminDeleteChecklistItem(id: string): Promise<void> {
-  const user = await requireUser();
-  if (!isAdmin(user.email)) throw new Error("Unauthorized");
+  const user = await requireAdmin("checklist_item.deleted");
   await checklistService.deleteItem(id);
+  await auditService.recordAudit({
+    actorEmail: user.email,
+    action: "checklist_item.deleted",
+    targetId: id,
+  });
 }

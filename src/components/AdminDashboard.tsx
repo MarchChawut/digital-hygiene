@@ -7,6 +7,7 @@ import { clearRecords, runRetentionCleanupNow } from "@/app/actions";
 import type { AssessmentRecord } from "@/models/assessment";
 import type { SurveyQuestion } from "@/models/survey";
 import type { ChecklistItem } from "@/models/risk";
+import type { AuditLogEntry } from "@/models/audit";
 import { fmtTime, fmtDate, scorePill } from "@/lib/format";
 import { toast } from "sonner";
 import { Download, FolderArchive, ArrowLeft } from "lucide-react";
@@ -15,6 +16,7 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { SurveyAdmin } from "@/components/SurveyAdmin";
 import { ChecklistAdmin } from "@/components/ChecklistAdmin";
+import { AuditLogPanel } from "@/components/AuditLogPanel";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -43,11 +45,13 @@ export default function AdminDashboard({
   initialRecords,
   initialSurveyQuestions,
   initialChecklistItems,
+  initialAuditLog,
 }: {
   email: string;
   initialRecords: AssessmentRecord[];
   initialSurveyQuestions: SurveyQuestion[];
   initialChecklistItems: ChecklistItem[];
+  initialAuditLog: AuditLogEntry[];
 }) {
   const [records, setRecords] = useState<AssessmentRecord[]>(initialRecords);
   const checklistById = useMemo(
@@ -354,6 +358,7 @@ export default function AdminDashboard({
 
         <ChecklistAdmin initialItems={initialChecklistItems} />
         <SurveyAdmin initialQuestions={initialSurveyQuestions} />
+        <AuditLogPanel initialEntries={initialAuditLog} />
       </main>
 
       <BottomNav current="admin" />
