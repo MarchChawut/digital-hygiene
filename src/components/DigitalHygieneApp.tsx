@@ -503,7 +503,7 @@ export default function DigitalHygieneApp({
                 ล้างเครื่องให้ใส <br/><span className="text-sky-300">ใส่ใจภูมิคุ้มกันดิจิทัล</span>
               </h1>
               <p className="text-blue-100 max-w-2xl mx-auto text-base sm:text-lg leading-relaxed">
-                วิเคราะห์ช่องโหว่และความเสี่ยงทางไซเบอร์ <br/> ผ่านกิจกรรมสุขอนามัยดิจิทัลยุคใหม่
+                วิเคราะห์ช่องโหว่และความเสี่ยงทางไซเบอร์ <br/> ผ่านกิจกรรมโครงการ Digital Hygiene & Safety First
               </p>
               {/* <p className="text-blue-200 text-sm mt-3">กอง/หน่วยงาน: {division}</p> */}
               <p className="text-sm font-semibold tracking-wider uppercase bg-gradient-to-r from-amber-400 via-orange-400 to-yellow-300 bg-clip-text text-transparent mt-3">กอง/หน่วยงาน: {division}</p>
@@ -518,7 +518,7 @@ export default function DigitalHygieneApp({
               <div>
                 <h2 className="text-xl font-bold text-slate-800 mb-1.5">รายการตรวจสอบ (Risk Checklist)</h2>
                 <p className="text-sm text-slate-500">
-                  ติ๊กกิจกรรมที่คุณ <span className="text-emerald-600 font-bold">&quot;ทำเสร็จแล้ว&quot;</span> ระบบจะคำนวณ % ความปลอดภัยของอุปกรณ์ และแจ้งความเสี่ยงที่ยังเหลืออยู่จากข้อที่ยังไม่ได้ทำ
+                  เลือกกิจกรรมที่คุณ <span className="text-emerald-600 font-bold">&quot;ทำเสร็จแล้ว&quot;</span> ระบบจะคำนวณ % ความปลอดภัยของอุปกรณ์ และแจ้งความเสี่ยงที่ยังเหลืออยู่จากข้อที่ยังไม่ได้ทำ
                 </p>
               </div>
             </div>
@@ -563,7 +563,7 @@ export default function DigitalHygieneApp({
                     {group.id === "cleanup" && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                         <label className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                          ก่อนเริ่มภารกิจ (พื้นที่ที่ใช้ไป) :
+                          ก่อนเริ่มกิจกรรม (พื้นที่ที่ใช้ไป) :
                           <Input
                             type="number"
                             inputMode="decimal"
@@ -577,7 +577,7 @@ export default function DigitalHygieneApp({
                           GB
                         </label>
                         <label className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                          หลังปฏิบัติภารกิจ (พื้นที่ที่ใช้ไป) :
+                          หลังกิจกรรม (พื้นที่ที่ใช้ไป) :
                           <Input
                             type="number"
                             inputMode="decimal"
