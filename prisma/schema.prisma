@@ -83,6 +83,13 @@ model AssessmentRecord {
   scoreLabel  String
   // task ids the user marked as "not done" — stored as JSON (MySQL/MariaDB has no scalar list)
   selectedIds Json
+  // Optional self-reported device storage USED (GB, not free/available) before/
+  // after the Digital Cleanup checklist. Float (not Int) since device "Storage"
+  // settings commonly report fractional GB. Both nullable — supplying them isn't
+  // required to submit an assessment. A successful cleanup should reduce used
+  // space, so "freed" = storageBeforeGb - storageAfterGb (see AdminDashboard.tsx).
+  storageBeforeGb Float?
+  storageAfterGb  Float?
   createdAt   DateTime @default(now())
 
   @@index([email])
@@ -133,4 +140,23 @@ model ChecklistItem {
 
   @@index([order])
   @@index([groupId])
+}
+
+// Security/accountability audit trail for incident response — admin mutations
+// and auth events. Separate from AssessmentRecord's 30-day retention window;
+// swept on its own longer cutoff by retention.service.ts.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorEmail String
+  // e.g. "records.cleared", "checklist_item.created", "auth.signin"
+  action     String
+  // Optional id of the affected entity (survey question id, checklist item id, ...).
+  targetId   String?
+  // Optional structured details (counts, before/after values, provider, ...).
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([actorEmail])
+  @@index([action])
+  @@index([createdAt])
 }

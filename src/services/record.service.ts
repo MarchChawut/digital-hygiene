@@ -11,6 +11,8 @@ function toModel(row: {
   gaps: number;
   scoreLabel: string;
   selectedIds: unknown;
+  storageBeforeGb: number | null;
+  storageAfterGb: number | null;
   createdAt: Date;
 }): AssessmentRecord {
   return {
@@ -21,6 +23,8 @@ function toModel(row: {
     gaps: row.gaps,
     scoreLabel: row.scoreLabel,
     selectedIds: Array.isArray(row.selectedIds) ? (row.selectedIds as string[]) : [],
+    storageBeforeGb: row.storageBeforeGb,
+    storageAfterGb: row.storageAfterGb,
   };
 }
 
@@ -37,6 +41,8 @@ export async function createRecord(data: {
   gaps: number;
   scoreLabel: string;
   selectedIds: string[];
+  storageBeforeGb?: number;
+  storageAfterGb?: number;
 }): Promise<AssessmentRecord> {
   const row = await prisma.assessmentRecord.create({ data });
   return toModel(row);

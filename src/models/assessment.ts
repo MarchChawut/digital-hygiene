@@ -10,6 +10,11 @@ export interface AssessmentRecord {
   gaps: number;
   scoreLabel: string;
   selectedIds: string[];
+  // Optional self-reported device storage USED (GB, not free/available) before/
+  // after the Digital Cleanup checklist. Null when not supplied. A successful
+  // cleanup should reduce used space, so "freed" = storageBeforeGb - storageAfterGb.
+  storageBeforeGb: number | null;
+  storageAfterGb: number | null;
 }
 
 // email + division are derived server-side from the authenticated session,
@@ -18,4 +23,6 @@ export interface CreateRecordInput {
   gaps: number;
   scoreLabel: string;
   selectedIds: string[];
+  storageBeforeGb?: number;
+  storageAfterGb?: number;
 }

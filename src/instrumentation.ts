@@ -1,3 +1,5 @@
+import { createLogger } from "@/lib/logger";
+
 // Next.js boot-hook file convention (https://nextjs.org/docs/app/guides/instrumentation).
 // Runs once when the long-lived Node server starts (self-hosted `pnpm start`,
 // not serverless) — used here to schedule the 30-day data-retention cleanup
@@ -15,13 +17,38 @@ export async function register() {
   g.__retentionSchedulerStarted = true;
 
   const { runRetentionCleanup } = await import("@/services/retention.service");
+  const log = createLogger("retention");
 
   const DAY_MS = 24 * 60 * 60 * 1000;
   const sweep = () => {
-    runRetentionCleanup().catch((err) => {
-      console.error("[retention] cleanup sweep failed:", err);
-    });
+    runRetentionCleanup()
+      .then((result) => log.info("sweep_complete", result))
+      .catch((err) => log.error("sweep_failed", err));
   };
   sweep(); // run once at boot, then daily
   setInterval(sweep, DAY_MS);
+}
+
+// Next.js instrumentation hook that captures errors uncaught anywhere else in
+// the app (Server Components, Route Handlers, Server Actions) — the safety net
+// for incident response: without this, an error outside the flows explicitly
+// logged elsewhere would vanish with no trace.
+export async function onRequestError(
+  error: unknown,
+  errorRequest: Readonly<{ path: string; method: string; headers: NodeJS.Dict<string | string[]> }>,
+  errorContext: Readonly<{
+    routerKind: "Pages Router" | "App Router";
+    routePath: string;
+    routeType: "render" | "route" | "action" | "proxy";
+    renderSource?: string;
+    revalidateReason: "on-demand" | "stale" | undefined;
+  }>
+) {
+  const log = createLogger("request");
+  log.error("uncaught", error, {
+    path: errorRequest.path,
+    method: errorRequest.method,
+    routeType: errorContext.routeType,
+    routePath: errorContext.routePath,
+  });
 }

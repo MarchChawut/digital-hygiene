@@ -3,6 +3,7 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import type { PrismaClient } from "@/lib/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { isAdmin } from "@/services/auth.service";
+import * as auditService from "@/services/audit.service";
 import { authConfig } from "@/auth.config";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -30,6 +31,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.isAdmin = isAdmin(session.user.email);
       }
       return session;
+    },
+  },
+  // events (unlike callbacks) always run server-side after the sign-in decision
+  // is final — the right place for the durable audit row (this file is Node-only
+  // / Prisma-safe, unlike the edge-safe src/auth.config.ts).
+  events: {
+    async signIn({ user, account, isNewUser }) {
+      if (!user.email) return;
+      await auditService.recordAudit({
+        actorEmail: user.email,
+        action: "auth.signin",
+        metadata: { provider: account?.provider ?? null, isNewUser: !!isNewUser },
+      });
     },
   },
 });

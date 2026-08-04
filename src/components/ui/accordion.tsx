@@ -21,10 +21,12 @@ function AccordionItem({ className, ...props }: AccordionPrimitive.Item.Props) {
 function AccordionTrigger({
   className,
   children,
+  leading,
   ...props
-}: AccordionPrimitive.Trigger.Props) {
+}: AccordionPrimitive.Trigger.Props & { leading?: React.ReactNode }) {
   return (
-    <AccordionPrimitive.Header className="flex">
+    <AccordionPrimitive.Header className="flex items-center gap-2">
+      {leading}
       <AccordionPrimitive.Trigger
         data-slot="accordion-trigger"
         className={cn(

@@ -7,6 +7,7 @@ import { clearRecords, runRetentionCleanupNow } from "@/app/actions";
 import type { AssessmentRecord } from "@/models/assessment";
 import type { SurveyQuestion } from "@/models/survey";
 import type { ChecklistItem } from "@/models/risk";
+import type { AuditLogEntry } from "@/models/audit";
 import { fmtTime, fmtDate, scorePill } from "@/lib/format";
 import { toast } from "sonner";
 import { Download, FolderArchive, ArrowLeft } from "lucide-react";
@@ -15,6 +16,7 @@ import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { SurveyAdmin } from "@/components/SurveyAdmin";
 import { ChecklistAdmin } from "@/components/ChecklistAdmin";
+import { AuditLogPanel } from "@/components/AuditLogPanel";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -43,11 +45,13 @@ export default function AdminDashboard({
   initialRecords,
   initialSurveyQuestions,
   initialChecklistItems,
+  initialAuditLog,
 }: {
   email: string;
   initialRecords: AssessmentRecord[];
   initialSurveyQuestions: SurveyQuestion[];
   initialChecklistItems: ChecklistItem[];
+  initialAuditLog: AuditLogEntry[];
 }) {
   const [records, setRecords] = useState<AssessmentRecord[]>(initialRecords);
   const checklistById = useMemo(
@@ -103,10 +107,22 @@ export default function AdminDashboard({
     }
     const esc = (s: unknown) =>
       String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const head = ["ลำดับ", "อีเมลผู้ใช้", "กอง / หน่วยงาน", "วันที่/เวลา", "จำนวนช่องโหว่", "ระดับความเสี่ยง", "รายการช่องโหว่"];
+    const head = [
+      "ลำดับ",
+      "อีเมลผู้ใช้",
+      "กอง / หน่วยงาน",
+      "วันที่/เวลา",
+      "จำนวนช่องโหว่",
+      "ระดับความเสี่ยง",
+      "พื้นที่ก่อน (GB)",
+      "พื้นที่หลัง (GB)",
+      "พื้นที่ที่ลดได้ (GB)",
+      "รายการช่องโหว่",
+    ];
     const body = records
       .map((r, i) => {
         const items = (r.selectedIds || []).map((id) => checklistById.get(id)?.title ?? id).join(" · ");
+        const freed = storageFreedGb(r);
         const cells = [
           i + 1,
           r.email,
@@ -114,6 +130,9 @@ export default function AdminDashboard({
           fmtTime(r.ts),
           `${r.gaps}/${initialChecklistItems.length}`,
           r.scoreLabel,
+          r.storageBeforeGb ?? "-",
+          r.storageAfterGb ?? "-",
+          freed !== null ? freed.toFixed(1) : "-",
           items,
         ];
         return "<tr>" + cells.map((c) => `<td>${esc(c)}</td>`).join("") + "</tr>";
@@ -156,6 +175,16 @@ export default function AdminDashboard({
   const RISKY_LABELS = ["วิกฤต", "เสี่ยงสูง", "ยังไม่ปลอดภัย"];
   const critical = records.filter((r) => RISKY_LABELS.includes(r.scoreLabel)).length;
   const avgGaps = records.length ? (records.reduce((a, r) => a + r.gaps, 0) / records.length).toFixed(1) : "0";
+
+  // Storage freed (GB) — only defined when a submission has both before/after
+  // values. Fields store used space, so freed = before − after (positive =
+  // improvement; can be negative if used space grew instead of shrinking).
+  const storageFreedGb = (r: AssessmentRecord): number | null =>
+    r.storageBeforeGb != null && r.storageAfterGb != null ? r.storageBeforeGb - r.storageAfterGb : null;
+  const storageRecords = records.filter((r) => storageFreedGb(r) !== null);
+  const avgStorageFreed = storageRecords.length
+    ? (storageRecords.reduce((a, r) => a + (storageFreedGb(r) ?? 0), 0) / storageRecords.length).toFixed(1)
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -234,6 +263,7 @@ export default function AdminDashboard({
             { label: "การประเมิน", value: String(records.length), cls: "text-slate-900" },
             { label: "เสี่ยงสูง", value: String(critical), cls: critical ? "text-red-600" : "text-slate-900" },
             { label: "ช่องโหว่เฉลี่ย", value: avgGaps, cls: "text-slate-900" },
+            { label: "พื้นที่เฉลี่ยที่ลดได้ (GB)", value: avgStorageFreed ?? "-", cls: "text-slate-900" },
           ].map((s) => (
             <Card key={s.label} className="rounded-2xl py-0">
               <CardContent className="p-4 sm:p-5">
@@ -253,7 +283,7 @@ export default function AdminDashboard({
 
           {records.length ? (
             <div className="overflow-x-auto">
-              <Table className="min-w-[780px]">
+              <Table className="min-w-[920px]">
                 <TableHeader>
                   <TableRow className="bg-slate-50">
                     <TableHead>อีเมลผู้ใช้</TableHead>
@@ -261,25 +291,32 @@ export default function AdminDashboard({
                     <TableHead>เวลา</TableHead>
                     <TableHead>ช่องโหว่</TableHead>
                     <TableHead>ระดับความเสี่ยง</TableHead>
+                    <TableHead>พื้นที่ที่ลดได้ (GB)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pagedRecords.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell className="font-semibold text-slate-900">{r.email}</TableCell>
-                      <TableCell className="text-slate-600 text-[13px]">{r.division || "-"}</TableCell>
-                      <TableCell className="text-slate-500 text-[13px]">{fmtTime(r.ts)}</TableCell>
-                      <TableCell className="text-slate-700 font-semibold">
-                        {r.gaps}
-                        <span className="text-slate-400">/{initialChecklistItems.length}</span>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={scorePill(r.scoreLabel)}>
-                          {r.scoreLabel}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {pagedRecords.map((r) => {
+                    const freed = storageFreedGb(r);
+                    return (
+                      <TableRow key={r.id}>
+                        <TableCell className="font-semibold text-slate-900">{r.email}</TableCell>
+                        <TableCell className="text-slate-600 text-[13px]">{r.division || "-"}</TableCell>
+                        <TableCell className="text-slate-500 text-[13px]">{fmtTime(r.ts)}</TableCell>
+                        <TableCell className="text-slate-700 font-semibold">
+                          {r.gaps}
+                          <span className="text-slate-400">/{initialChecklistItems.length}</span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={scorePill(r.scoreLabel)}>
+                            {r.scoreLabel}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-slate-600 text-[13px]">
+                          {freed !== null ? freed.toFixed(1) : "-"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -354,6 +391,7 @@ export default function AdminDashboard({
 
         <ChecklistAdmin initialItems={initialChecklistItems} />
         <SurveyAdmin initialQuestions={initialSurveyQuestions} />
+        <AuditLogPanel initialEntries={initialAuditLog} />
       </main>
 
       <BottomNav current="admin" />
