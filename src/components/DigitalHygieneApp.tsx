@@ -125,6 +125,24 @@ export default function DigitalHygieneApp({
   // master checkbox: indeterminate when only some of its categories are checked, and clicking it
   // bulk-toggles every category underneath.
   const [checkedCategories, setCheckedCategories] = useState<Record<string, boolean>>({});
+
+  // Optional self-reported device storage USED (GB, not free/available) before/after
+  // the Digital Cleanup checklist — kept as raw input strings so a partial/empty field
+  // doesn't force a NaN; parsed to numbers only when submitting (runAnalysis). A
+  // successful cleanup should reduce used space, so "freed" is before − after
+  // (positive = good); the UI labels spell out "ใช้ไป (Used)" so the two fields
+  // aren't ambiguous with free/available space.
+  const [storageBeforeGb, setStorageBeforeGb] = useState("");
+  const [storageAfterGb, setStorageAfterGb] = useState("");
+  const storageFreedGb = useMemo(() => {
+    const before = Number(storageBeforeGb);
+    const after = Number(storageAfterGb);
+    if (storageBeforeGb === "" || storageAfterGb === "" || !Number.isFinite(before) || !Number.isFinite(after)) {
+      return null;
+    }
+    return before - after;
+  }, [storageBeforeGb, storageAfterGb]);
+
   const [guideItem, setGuideItem] = useState<ChecklistItem | null>(null);
   const [showResult, setShowResult] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -300,6 +318,8 @@ export default function DigitalHygieneApp({
         gaps: riskIds.length,
         scoreLabel: score.label,
         selectedIds: riskIds,
+        storageBeforeGb: storageBeforeGb === "" ? undefined : Number(storageBeforeGb),
+        storageAfterGb: storageAfterGb === "" ? undefined : Number(storageAfterGb),
       });
       if ("ok" in result && !result.ok) {
         toast.error("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง");
@@ -540,6 +560,49 @@ export default function DigitalHygieneApp({
                         {done && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
                       </h3>
                     </label>
+                    {group.id === "cleanup" && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                        <label className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+                          ก่อนเริ่มภารกิจ (พื้นที่ที่ใช้ไป) :
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="0.1"
+                            placeholder="0"
+                            value={storageBeforeGb}
+                            onChange={(e) => setStorageBeforeGb(e.target.value)}
+                            className="w-24"
+                          />
+                          GB
+                        </label>
+                        <label className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+                          หลังปฏิบัติภารกิจ (พื้นที่ที่ใช้ไป) :
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="0.1"
+                            placeholder="0"
+                            value={storageAfterGb}
+                            onChange={(e) => setStorageAfterGb(e.target.value)}
+                            className="w-24"
+                          />
+                          GB
+                        </label>
+                        {storageFreedGb !== null && (
+                          <p
+                            className={`sm:col-span-2 text-xs font-bold ${
+                              storageFreedGb >= 0 ? "text-emerald-600" : "text-amber-600"
+                            }`}
+                          >
+                            {storageFreedGb >= 0
+                              ? `พื้นที่ว่างเพิ่มขึ้น ${storageFreedGb.toFixed(1)} GB`
+                              : `พื้นที่ว่างลดลง ${Math.abs(storageFreedGb).toFixed(1)} GB`}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {categories.length ? (
                       <Accordion multiple defaultValue={[]}>
                         {categories.map(({ category, items }) => {
@@ -638,6 +701,15 @@ export default function DigitalHygieneApp({
                       </span>{" "}
                       จาก {allCategoryKeys.length} หมวดย่อย
                     </div>
+                    {storageFreedGb !== null && (
+                      <div>
+                        {storageFreedGb >= 0 ? "พื้นที่จัดเก็บที่ลดได้" : "พื้นที่ที่ใช้เพิ่มขึ้น"}{" "}
+                        <span className="font-bold text-slate-900">
+                          {Math.abs(storageFreedGb).toFixed(1)}
+                        </span>{" "}
+                        GB
+                      </div>
+                    )}
                   </div>
                 </div>
               </DialogHeader>

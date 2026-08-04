@@ -84,7 +84,15 @@ export async function createRecord(
     gaps: input.gaps,
     scoreLabel: input.scoreLabel,
     selectedIds: input.selectedIds,
+    storageBeforeGb: sanitizeGb(input.storageBeforeGb),
+    storageAfterGb: sanitizeGb(input.storageAfterGb),
   });
+}
+
+// Optional, self-reported GB values from the client — not required to submit,
+// so bad/negative/non-finite input is dropped rather than rejected outright.
+function sanitizeGb(n?: number): number | undefined {
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 // Delete every submission — admin only.
