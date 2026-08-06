@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers } from "@/models/survey";
+import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers, SurveyResponse } from "@/models/survey";
 
 // Default questions inserted once, the first time the table is empty.
 const DEFAULT_QUESTIONS: SurveyQuestionInput[] = [
@@ -61,4 +61,15 @@ export async function createResponse(email: string, answers: SurveyAnswers): Pro
 export async function hasResponded(email: string): Promise<boolean> {
   const count = await prisma.surveyResponse.count({ where: { email } });
   return count > 0;
+}
+
+// All submitted survey responses, newest first — used by the admin export.
+export async function listResponses(): Promise<SurveyResponse[]> {
+  const rows = await prisma.surveyResponse.findMany({ orderBy: { createdAt: "desc" } });
+  return rows.map((r) => ({
+    id: r.id,
+    email: r.email,
+    ts: r.createdAt.getTime(),
+    answers: (r.answers ?? {}) as SurveyAnswers,
+  }));
 }
