@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { isAdmin } from "@/services/auth.service";
 import { listRecords } from "@/services/record.service";
-import { listQuestions } from "@/services/survey.service";
+import { listQuestions, listResponses } from "@/services/survey.service";
 import { listItems } from "@/services/checklist.service";
 import { listAuditLog } from "@/services/audit.service";
 import AdminDashboard from "@/components/AdminDashboard";
@@ -15,9 +15,10 @@ export default async function AdminPage() {
     redirect("/");
   }
 
-  const [records, surveyQuestions, checklistItems, auditLog] = await Promise.all([
+  const [records, surveyQuestions, surveyResponses, checklistItems, auditLog] = await Promise.all([
     listRecords(),
     listQuestions(),
+    listResponses(),
     listItems(),
     listAuditLog(),
   ]);
@@ -26,6 +27,7 @@ export default async function AdminPage() {
       email={session.user.email}
       initialRecords={records}
       initialSurveyQuestions={surveyQuestions}
+      initialSurveyResponses={surveyResponses}
       initialChecklistItems={checklistItems}
       initialAuditLog={auditLog}
     />

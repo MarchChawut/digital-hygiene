@@ -5,7 +5,7 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { clearRecords, runRetentionCleanupNow } from "@/app/actions";
 import type { AssessmentRecord } from "@/models/assessment";
-import type { SurveyQuestion } from "@/models/survey";
+import type { SurveyQuestion, SurveyResponse } from "@/models/survey";
 import type { ChecklistItem } from "@/models/risk";
 import type { AuditLogEntry } from "@/models/audit";
 import { fmtTime, fmtDate, scorePill } from "@/lib/format";
@@ -44,16 +44,25 @@ export default function AdminDashboard({
   email,
   initialRecords,
   initialSurveyQuestions,
+  initialSurveyResponses,
   initialChecklistItems,
   initialAuditLog,
 }: {
   email: string;
   initialRecords: AssessmentRecord[];
   initialSurveyQuestions: SurveyQuestion[];
+  initialSurveyResponses: SurveyResponse[];
   initialChecklistItems: ChecklistItem[];
   initialAuditLog: AuditLogEntry[];
 }) {
   const [records, setRecords] = useState<AssessmentRecord[]>(initialRecords);
+  const [surveyResponses, setSurveyResponses] = useState<SurveyResponse[]>(initialSurveyResponses);
+  // Only clearData()/runRetentionCleanup() below (the two admin actions that live in this
+  // file) optimistically append to this state so their own audit row shows up without a
+  // reload. Checklist/survey CRUD (ChecklistAdmin/SurveyAdmin) also write audit rows but
+  // manage their own local state independently of this file — those rows still need a
+  // page reload to appear here.
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(initialAuditLog);
   const checklistById = useMemo(
     () => new Map(initialChecklistItems.map((i) => [i.id, i])),
     [initialChecklistItems]
@@ -75,9 +84,20 @@ export default function AdminDashboard({
 
   const clearData = async () => {
     try {
-      await clearRecords();
+      const result = await clearRecords();
       setRecords([]);
       setPage(0);
+      setAuditLog((prev) => [
+        {
+          id: `local-${Date.now()}`,
+          actorEmail: email,
+          action: "records.cleared",
+          targetId: null,
+          metadata: { deleted: result.deleted },
+          ts: Date.now(),
+        },
+        ...prev,
+      ]);
       toast.success("ล้างข้อมูลการประเมินทั้งหมดแล้ว");
     } catch {
       toast.error("ไม่สามารถล้างข้อมูลได้");
@@ -91,7 +111,19 @@ export default function AdminDashboard({
       const result = await runRetentionCleanupNow();
       const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
       setRecords((prev) => prev.filter((r) => r.ts >= cutoff));
+      setSurveyResponses((prev) => prev.filter((r) => r.ts >= cutoff));
       setPage(0);
+      setAuditLog((prev) => [
+        {
+          id: `local-${Date.now()}`,
+          actorEmail: email,
+          action: "retention.manual_sweep",
+          targetId: null,
+          metadata: result,
+          ts: Date.now(),
+        },
+        ...prev,
+      ]);
       toast.success(
         `ลบข้อมูลที่เกิน 30 วันแล้ว: ผลการประเมิน ${result.records} รายการ, แบบสอบถาม ${result.surveyResponses} รายการ`
       );
@@ -100,14 +132,41 @@ export default function AdminDashboard({
     }
   };
 
+  // Builds an Excel XML Spreadsheet 2003 (SpreadsheetML) document — a plain-text
+  // XML format Excel opens natively as a real multi-tab workbook, no library
+  // needed (same "no dependency" spirit as the old HTML-as-.xls trick this
+  // replaces). Two sheets: submissions, then satisfaction-survey responses.
   const exportExcel = () => {
-    if (!records.length) {
+    if (!records.length && !surveyResponses.length) {
       toast.error("ยังไม่มีข้อมูลสำหรับส่งออก");
       return;
     }
     const esc = (s: unknown) =>
-      String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const head = [
+      String(s ?? "")
+        // XML 1.0 forbids most C0 control chars outright (no escape makes them legal) —
+        // free-text survey answers can carry these from pasted Word/PDF content, and
+        // just one would make Excel refuse to open the whole workbook.
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+    // Numbers are declared ss:Type="Number" (not string) so Excel keeps them
+    // summable/averageable (device-storage GB, survey ratings) instead of importing
+    // them as text like the old HTML-table export effectively did via type-sniffing.
+    const dataCell = (v: string | number) =>
+      typeof v === "number" && Number.isFinite(v)
+        ? `<Cell><Data ss:Type="Number">${v}</Data></Cell>`
+        : `<Cell><Data ss:Type="String">${esc(v)}</Data></Cell>`;
+    const headerCell = (v: string) =>
+      `<Cell ss:StyleID="Header"><Data ss:Type="String">${esc(v)}</Data></Cell>`;
+    const row = (cells: (string | number)[]) => `<Row>${cells.map(dataCell).join("")}</Row>`;
+    const worksheet = (name: string, head: string[], bodyRows: string) =>
+      `<Worksheet ss:Name="${esc(name)}"><Table><Row>${head.map(headerCell).join("")}</Row>${bodyRows}</Table></Worksheet>`;
+
+    // Sheet 1: submissions (same columns as the previous single-sheet export).
+    const recordsHead = [
       "ลำดับ",
       "อีเมลผู้ใช้",
       "กอง / หน่วยงาน",
@@ -119,11 +178,11 @@ export default function AdminDashboard({
       "พื้นที่ที่ลดได้ (GB)",
       "รายการช่องโหว่",
     ];
-    const body = records
+    const recordsBody = records
       .map((r, i) => {
         const items = (r.selectedIds || []).map((id) => checklistById.get(id)?.title ?? id).join(" · ");
         const freed = storageFreedGb(r);
-        const cells = [
+        return row([
           i + 1,
           r.email,
           r.division || "-",
@@ -132,23 +191,37 @@ export default function AdminDashboard({
           r.scoreLabel,
           r.storageBeforeGb ?? "-",
           r.storageAfterGb ?? "-",
-          freed !== null ? freed.toFixed(1) : "-",
+          freed !== null ? Number(freed.toFixed(1)) : "-",
           items,
-        ];
-        return "<tr>" + cells.map((c) => `<td>${esc(c)}</td>`).join("") + "</tr>";
+        ]);
       })
       .join("");
-    const table =
-      '<table border="1"><thead><tr>' +
-      head.map((h) => `<th style="background:#2563eb;color:#fff">${esc(h)}</th>`).join("") +
-      "</tr></thead><tbody>" +
-      body +
-      "</tbody></table>";
-    const html =
-      '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>' +
-      table +
-      "</body></html>";
-    const blob = new Blob(["﻿" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
+
+    // Sheet 2: satisfaction-survey responses — one column per current survey
+    // question (ordered), value = the user's answer to that question. Answers
+    // keyed to a since-deleted question have no column and are dropped.
+    const sortedQuestions = [...initialSurveyQuestions].sort((a, b) => a.order - b.order);
+    const surveyHead = ["ลำดับ", "อีเมลผู้ใช้", "วันที่/เวลา", ...sortedQuestions.map((q) => q.text)];
+    const surveyBody = surveyResponses
+      .map((res, i) =>
+        row([i + 1, res.email, fmtTime(res.ts), ...sortedQuestions.map((q) => res.answers[q.id] ?? "-")])
+      )
+      .join("");
+
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<?mso-application progid="Excel.Sheet"?>' +
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" ' +
+      'xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+      'xmlns:x="urn:schemas-microsoft-com:office:excel" ' +
+      'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
+      '<Styles><Style ss:ID="Header"><Font ss:Bold="1" ss:Color="#FFFFFF"/>' +
+      '<Interior ss:Color="#2563EB" ss:Pattern="Solid"/></Style></Styles>' +
+      worksheet("บันทึกการประเมิน", recordsHead, recordsBody) +
+      worksheet("แบบสำรวจความพึงพอใจ", surveyHead, surveyBody) +
+      "</Workbook>";
+
+    const blob = new Blob(["﻿" + xml], { type: "application/vnd.ms-excel;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -185,6 +258,50 @@ export default function AdminDashboard({
   const avgStorageFreed = storageRecords.length
     ? (storageRecords.reduce((a, r) => a + (storageFreedGb(r) ?? 0), 0) / storageRecords.length).toFixed(1)
     : null;
+
+  const sortedSurveyQuestions = useMemo(
+    () => [...initialSurveyQuestions].sort((a, b) => a.order - b.order),
+    [initialSurveyQuestions]
+  );
+
+  // Rating questions: average (1-5) + valid-answer count, per question. Answers
+  // are a JSON blob with no DB-level validation, and a question's `type` can be
+  // edited in SurveyAdmin after responses already exist, so guard both shape
+  // and range rather than trusting the answer matches the question's current type.
+  const ratingStats = useMemo(
+    () =>
+      sortedSurveyQuestions
+        .filter((q) => q.type === "rating")
+        .map((q) => {
+          let sum = 0;
+          let count = 0;
+          for (const res of surveyResponses) {
+            const raw = res.answers[q.id];
+            const n = typeof raw === "number" ? raw : Number(raw);
+            if (Number.isFinite(n) && n >= 1 && n <= 5) {
+              sum += n;
+              count += 1;
+            }
+          }
+          return { question: q, avg: count ? sum / count : null, count };
+        }),
+    [sortedSurveyQuestions, surveyResponses]
+  );
+
+  // Text questions: non-empty free-text answers (surveyResponses is already
+  // ordered newest-first from listResponses(), so no re-sort needed here).
+  const textAnswersByQuestion = useMemo(
+    () =>
+      sortedSurveyQuestions
+        .filter((q) => q.type === "text")
+        .map((q) => ({
+          question: q,
+          answers: surveyResponses
+            .filter((res) => typeof res.answers[q.id] === "string" && (res.answers[q.id] as string).trim())
+            .map((res) => ({ email: res.email, ts: res.ts, text: res.answers[q.id] as string })),
+        })),
+    [sortedSurveyQuestions, surveyResponses]
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -357,6 +474,71 @@ export default function AdminDashboard({
           )}
         </Card>
 
+        {/* Satisfaction survey results */}
+        <Card className="rounded-3xl shadow-xl overflow-hidden mt-6 py-0">
+          <div className="px-7 py-6 border-b border-slate-100 flex items-center justify-between">
+            <h2 className="text-[17px] font-bold text-slate-800">ผลแบบสำรวจความพึงพอใจ (Satisfaction Survey Results)</h2>
+            <span className="text-sm text-slate-400">{surveyResponses.length} รายการ</span>
+          </div>
+
+          {surveyResponses.length ? (
+            <div className="p-6 space-y-6">
+              {ratingStats.map(({ question, avg, count }) => (
+                <div key={question.id}>
+                  <div className="flex items-center justify-between gap-3 mb-1.5">
+                    <span className="text-sm font-semibold text-slate-800">{question.text}</span>
+                    <span className="text-sm font-bold text-slate-700 shrink-0">
+                      {avg !== null ? `${avg.toFixed(1)} / 5` : "-"}
+                      <span className="text-slate-400 font-normal ml-1.5 text-xs">({count} คำตอบ)</span>
+                    </span>
+                  </div>
+                  <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-blue-500"
+                      style={{ width: `${avg !== null ? Math.min(100, Math.max(0, (avg / 5) * 100)) : 0}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+
+              {textAnswersByQuestion.map(({ question, answers }) => (
+                <div key={question.id}>
+                  <div className="text-sm font-semibold text-slate-800 mb-2">
+                    {question.text}
+                    <span className="text-slate-400 font-normal ml-1.5 text-xs">({answers.length} คำตอบ)</span>
+                  </div>
+                  {answers.length ? (
+                    <div className="space-y-2">
+                      {answers.map((a, i) => (
+                        <div key={i} className="rounded-xl bg-slate-50 px-4 py-3">
+                          <div className="text-[13px] text-slate-500 mb-1">
+                            {a.email} · {fmtTime(a.ts)}
+                          </div>
+                          <p className="text-sm text-slate-800 whitespace-pre-wrap break-words">{a.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-400">ยังไม่มีคำตอบ</p>
+                  )}
+                </div>
+              ))}
+
+              {!ratingStats.length && !textAnswersByQuestion.length && (
+                <p className="text-sm text-slate-400 text-center py-4">ไม่มีคำถามในแบบสำรวจ</p>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-14 px-5">
+              <FolderArchive className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+              <p className="text-slate-700 font-semibold">ยังไม่มีคำตอบแบบสำรวจ</p>
+              <p className="text-slate-400 text-[13px] mt-1.5">
+                เมื่อผู้ใช้ตอบแบบสำรวจความพึงพอใจ ผลลัพธ์จะปรากฏที่นี่
+              </p>
+            </div>
+          )}
+        </Card>
+
         {/* Users */}
         <Card className="rounded-3xl shadow-xl overflow-hidden mt-6 py-0">
           <div className="px-7 py-6 border-b border-slate-100">
@@ -391,7 +573,7 @@ export default function AdminDashboard({
 
         <ChecklistAdmin initialItems={initialChecklistItems} />
         <SurveyAdmin initialQuestions={initialSurveyQuestions} />
-        <AuditLogPanel initialEntries={initialAuditLog} />
+        <AuditLogPanel initialEntries={auditLog} />
       </main>
 
       <BottomNav current="admin" />

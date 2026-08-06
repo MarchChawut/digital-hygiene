@@ -18,3 +18,12 @@ export interface SurveyQuestionInput {
   type: SurveyQuestionType;
   order: number;
 }
+
+// One user's submitted answers, as read back for the admin export. Mirrors
+// AssessmentRecord's `ts` convention (epoch ms, from the DB's createdAt).
+export interface SurveyResponse {
+  id: string;
+  email: string;
+  ts: number;
+  answers: SurveyAnswers;
+}
