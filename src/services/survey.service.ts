@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { createCachedLoader } from "@/lib/cached-loader";
 import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers, SurveyResponse } from "@/models/survey";
 
 // Default questions inserted once, the first time the table is empty.
@@ -30,14 +31,21 @@ async function ensureDefaultQuestions(): Promise<void> {
   seeded = true;
 }
 
-export async function listQuestions(): Promise<SurveyQuestion[]> {
+// Cached (see lib/cached-loader.ts): read on every /survey view and on the completing
+// createRecord, changed only by admin edits. The returned array is frozen and shared.
+const questionsLoader = createCachedLoader(async () => {
   await ensureDefaultQuestions();
   const rows = await prisma.surveyQuestion.findMany({ orderBy: { order: "asc" } });
-  return rows.map(toModel);
+  return Object.freeze(rows.map(toModel)) as readonly SurveyQuestion[];
+});
+
+export async function listQuestions(): Promise<readonly SurveyQuestion[]> {
+  return questionsLoader.get();
 }
 
 export async function createQuestion(input: SurveyQuestionInput): Promise<SurveyQuestion> {
   const row = await prisma.surveyQuestion.create({ data: input });
+  questionsLoader.invalidate();
   return toModel(row);
 }
 
@@ -46,12 +54,14 @@ export async function updateQuestion(
   input: Partial<SurveyQuestionInput>
 ): Promise<SurveyQuestion> {
   const row = await prisma.surveyQuestion.update({ where: { id }, data: input });
+  questionsLoader.invalidate();
   return toModel(row);
 }
 
 export async function deleteQuestion(id: string): Promise<void> {
   await prisma.surveyQuestion.delete({ where: { id } });
   seeded = false;
+  questionsLoader.invalidate();
 }
 
 export async function createResponse(email: string, answers: SurveyAnswers): Promise<void> {

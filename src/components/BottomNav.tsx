@@ -4,14 +4,14 @@ import Link from "next/link";
 import { ClipboardList, LayoutDashboard } from "lucide-react";
 
 // Mobile-only bottom navigation. Only shown for admins, who navigate between the
-// assessment ("/") and the backoffice ("/admin"); regular users have a single page.
+// assessment ("/cleanup") and the backoffice ("/admin"); regular users have a single page.
 export function BottomNav({ current }: { current: "app" | "admin" }) {
   const tabs = [
-    { id: "app" as const, label: "แบบประเมิน", href: "/", icon: ClipboardList },
+    { id: "app" as const, label: "แบบประเมิน", href: "/cleanup", icon: ClipboardList },
     { id: "admin" as const, label: "ระบบหลังบ้าน", href: "/admin", icon: LayoutDashboard },
   ];
   return (
-    <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur border-t border-slate-200 pb-[env(safe-area-inset-bottom)]">
+    <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-slate-200 pb-[env(safe-area-inset-bottom)]">
       <div className="flex items-stretch justify-around">
         {tabs.map((t) => {
           const active = current === t.id;

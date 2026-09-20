@@ -28,6 +28,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (session.user) {
         session.user.id = user.id;
         session.user.division = (user as { division?: string | null }).division ?? null;
+        // Also from the same DB row, so the (app) layout needs no extra query for the
+        // one-time data-retention notice.
+        session.user.retentionNoticeSeen =
+          (user as { retentionNoticeAcknowledgedAt?: Date | null }).retentionNoticeAcknowledgedAt != null;
         session.user.isAdmin = isAdmin(session.user.email);
       }
       return session;

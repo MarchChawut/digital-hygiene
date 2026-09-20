@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans_Thai, IBM_Plex_Sans } from "next/font/google";
+import { IBM_Plex_Sans_Thai } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -13,12 +13,6 @@ const plexSansThai = IBM_Plex_Sans_Thai({
   variable: "--font-plex-thai",
   display: "swap",
 });
-const plexSans = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "600", "700"],
-  variable: "--font-plex-sans",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "Digital Hygiene — Security Checklist",
@@ -27,7 +21,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="th" className={`${plexSansThai.variable} ${plexSans.variable}`}>
+    <html lang="th" className={plexSansThai.variable}>
       <body className="font-sans">
         {children}
         <Toaster />

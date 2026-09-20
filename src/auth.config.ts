@@ -13,11 +13,11 @@ const log = createLogger("auth");
 // Read either GOOGLE_CLIENT_ID/SECRET (used in this project's .env) or Auth.js's
 // default AUTH_GOOGLE_ID/SECRET.
 export const authConfig = {
-  // Send failed/rejected sign-ins back to our own start screen instead of
-  // Auth.js's default unstyled /api/auth/error page (which doesn't recover on refresh).
+  // Send sign-in and failed/rejected sign-ins to our own /login screen instead of
+  // Auth.js's default unstyled /api/auth pages (which don't recover on refresh).
   pages: {
-    signIn: "/",
-    error: "/",
+    signIn: "/login",
+    error: "/login",
   },
   providers: [
     Google({

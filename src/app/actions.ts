@@ -1,6 +1,7 @@
 "use server";
 
-import { auth } from "@/auth";
+import { unstable_rethrow } from "next/navigation";
+import { auth, signOut } from "@/auth";
 import { isAdmin } from "@/services/auth.service";
 import * as recordService from "@/services/record.service";
 import * as userService from "@/services/user.service";
@@ -10,7 +11,8 @@ import * as retentionService from "@/services/retention.service";
 import * as auditService from "@/services/audit.service";
 import { createLogger } from "@/lib/logger";
 import { DIVISIONS } from "@/models/division";
-import type { AssessmentRecord, CreateRecordInput } from "@/models/assessment";
+import { GROUP_IDS, isGroupId } from "@/models/activity-group";
+import type { CreateRecordInput, CreateRecordResult } from "@/models/assessment";
 import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers } from "@/models/survey";
 import type { ChecklistItem, ChecklistItemInput } from "@/models/risk";
 
@@ -48,6 +50,22 @@ async function requireAdmin(action: string) {
   return user;
 }
 
+// Sign out on the server (deletes the DB session, clears the cookie). Used instead of
+// next-auth/react's signOut so that library stays out of the signed-in bundle.
+// It deliberately does NOT redirect: a redirecting server action makes the client-side
+// promise reject, which callers' try/catch would misread as a failure. The caller
+// navigates itself (window.location.assign) once this resolves.
+export async function signOutAction(): Promise<void> {
+  try {
+    await signOut({ redirect: false });
+  } catch (err) {
+    unstable_rethrow(err);
+    // In the expired-session case the DB row is already gone and the adapter throws on
+    // deleting it. The user is signed out either way, so don't fail the caller.
+    log.warn("signout_failed", { message: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 // Set the current user's division (the one-time gate after first sign-in).
 // A missing/expired session is returned as a typed result (not thrown) so the
 // client can distinguish "please sign in again" from an unexpected failure.
@@ -67,10 +85,10 @@ export async function setDivision(
   return { ok: true };
 }
 
-// Save one submission. email + division come from the session, not the client.
-export async function createRecord(
-  input: CreateRecordInput
-): Promise<AssessmentRecord | { ok: false; reason: "unauthenticated" }> {
+// Save one section's submission. email + division come from the session, not the
+// client. The section and the items counted against it are re-validated here, so a
+// tampered payload can't attach other sections' items or inflate `gaps`.
+export async function createRecord(input: CreateRecordInput): Promise<CreateRecordResult> {
   let user;
   try {
     user = await requireUser();
@@ -78,15 +96,47 @@ export async function createRecord(
     return { ok: false, reason: "unauthenticated" };
   }
   if (!user.division) throw new Error("Division not set");
-  return recordService.createRecord({
+  if (!isGroupId(input.groupId)) throw new Error("Invalid group");
+
+  const [items, completedBefore] = await Promise.all([
+    checklistService.listItems(),
+    recordService.listCompletedGroupIds(user.email),
+  ]);
+  const groupItemIds = new Set(items.filter((i) => i.groupId === input.groupId).map((i) => i.id));
+  if (groupItemIds.size === 0) throw new Error("Group has no checklist items");
+  const selectedIds = [...new Set(input.selectedIds)].filter((id) => groupItemIds.has(id));
+
+  const record = await recordService.createRecord({
     email: user.email,
     division: user.division,
-    gaps: input.gaps,
+    groupId: input.groupId,
+    gaps: selectedIds.length,
     scoreLabel: input.scoreLabel,
-    selectedIds: input.selectedIds,
+    selectedIds,
     storageBeforeGb: sanitizeGb(input.storageBeforeGb),
     storageAfterGb: sanitizeGb(input.storageAfterGb),
   });
+  log.info("assessment.submitted", {
+    recordId: record.id,
+    groupId: input.groupId,
+    gaps: record.gaps,
+    scoreLabel: record.scoreLabel,
+  });
+
+  const completedGroupIds = GROUP_IDS.filter(
+    (g) => g === input.groupId || completedBefore.includes(g)
+  );
+  // A section only counts as required if it has items (an admin may empty one out).
+  const requiredGroupIds = GROUP_IDS.filter((g) => items.some((i) => i.groupId === g));
+  const justCompletedAll =
+    !completedBefore.includes(input.groupId) &&
+    requiredGroupIds.every((g) => completedGroupIds.includes(g));
+  const surveyNudge =
+    justCompletedAll &&
+    !(await surveyService.hasResponded(user.email)) &&
+    (await surveyService.listQuestions()).length > 0;
+
+  return { ok: true, record, completedGroupIds, surveyNudge };
 }
 
 // Optional, self-reported GB values from the client — not required to submit,
@@ -141,6 +191,9 @@ export async function runRetentionCleanupNow(): Promise<{
 
 export async function submitSurveyResponse(answers: SurveyAnswers): Promise<void> {
   const user = await requireUser();
+  // The survey is a standalone page now, so two open tabs could both submit — one
+  // response per user, same as the old dialog's "already responded" check.
+  if (await surveyService.hasResponded(user.email)) return;
   await surveyService.createResponse(user.email, answers);
 }
 

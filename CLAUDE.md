@@ -9,10 +9,10 @@ Package manager is **pnpm** (`pnpm-lock.yaml`).
 ```bash
 pnpm install
 cp .env.example .env          # DATABASE_URL, AUTH_SECRET, GOOGLE_CLIENT_ID/SECRET, ADMIN_EMAILS
-pnpm dlx prisma generate      # generate the Prisma client into lib/generated/prisma
-pnpm dlx prisma migrate deploy  # apply migrations to the DB (migrate dev while developing)
+pnpm exec prisma generate     # generate the Prisma client into src/lib/generated/prisma
+pnpm exec prisma migrate deploy  # apply migrations to the DB (migrate dev while developing)
 pnpm dev            # dev server (Turbopack), http://localhost:3003  (port fixed to match the Google redirect URI)
-pnpm build          # production build (Turbopack) — see caveat below
+pnpm build          # production build (Turbopack) — see Build below
 pnpm build:webpack  # production build with Webpack (fallback)
 pnpm start          # serve the production build, http://localhost:3006 (port fixed to match this
                     # deployment's Cloudflare Tunnel ingress config on the Synology host)
@@ -24,9 +24,25 @@ The DB is **MariaDB `digital-hygiene`** (hyphenated name — needs backticks in 
 ```bash
 docker run --name dh-maria -e MARIADB_ROOT_PASSWORD=root \
   -e 'MARIADB_DATABASE=digital-hygiene' -p 3307:3306 -d mariadb:10
-DATABASE_URL="mysql://root:root@127.0.0.1:3307/digital-hygiene" pnpm dlx prisma migrate dev
+DATABASE_URL="mysql://root:root@127.0.0.1:3307/digital-hygiene" pnpm exec prisma migrate dev
 ```
-`prisma generate` writes into `lib/generated/prisma` (gitignored) — regenerate after schema changes.
+`prisma generate` writes into `src/lib/generated/prisma` (gitignored) — regenerate after schema changes.
+Use `pnpm exec prisma …` (the pinned local CLI), **not** `pnpm dlx prisma …` — `dlx` fetches the latest
+Prisma, which no longer has the `migrate` command.
+
+### Debugging local dev (production is live on the Synology host)
+The dev DB (`100.125.86.64:3307`) is only reachable over **Tailscale** — before running `pnpm dev`,
+check `tailscale status`; if it says "Tailscale is stopped", run `tailscale up` first. A
+`DriverAdapterError: pool timeout ... (active=0 idle=0 ...)` means **zero** connections ever opened —
+that's a network-reachability problem (Tailscale down, VPN hop dropped), not a Prisma/pool-size bug;
+contrast with errors where `active`/`idle` is nonzero, which point at query/auth issues instead. If
+Tailscale is unavailable, fall back to the local Docker MariaDB container documented above instead of
+waiting it out.
+
+Never put the production `DATABASE_URL` (or any other prod secret) in the local `.env`, even
+commented out — an accidental uncomment would make `pnpm dev` read/write the live prod DB. For a
+one-off check against prod, pass it inline on the command instead, e.g. `DATABASE_URL="..." pnpm exec
+prisma studio`.
 
 ### Auth (Auth.js v5 / NextAuth) — env required
 Login is **Google OAuth** or **Guest** (passwordless magic-link email via Resend — anyone can sign in
@@ -38,17 +54,13 @@ URI must be `http://localhost:3003/api/auth/callback/google` (hence `pnpm dev` i
 3003). Provider is auto-checked at `GET /api/auth/providers`. Submitted assessment/survey data is
 auto-deleted after 30 days by an in-process scheduler (`src/instrumentation.ts` → `src/services/retention.service.ts`).
 
-### Build caveat (important)
-This project currently lives in `~/Downloads`, a macOS TCC-protected folder. `pnpm build`
-(Turbopack) fails there during page-data collection because Turbopack resolves realpaths through
-the protected parent directory. Workarounds, in order of preference:
-1. Move the project out of `~/Downloads` — then `pnpm build` works.
-2. Grant the terminal Full Disk Access (System Settings → Privacy & Security).
-3. Use `pnpm build:webpack`, which works even inside `~/Downloads`.
-
-`pnpm dev` (Turbopack) works fine regardless of location. `next.config.js` pins
-`outputFileTracingRoot` to this project to stop Next from treating `~` as the workspace root
-(a stray `~/package-lock.json` otherwise causes that).
+### Build
+`pnpm build` (Turbopack) works from the project's current location under `~/Documents`. It failed
+when the project lived in `~/Downloads` (macOS TCC-protected: Turbopack resolves realpaths through
+the protected parent during page-data collection) — if it ever moves back to a protected folder,
+use `pnpm build:webpack`, or grant the terminal Full Disk Access. `pnpm dev` works regardless.
+`next.config.js` pins `outputFileTracingRoot` to this project to stop Next from treating `~` as the
+workspace root (a stray `~/package-lock.json` otherwise causes that).
 
 ## Architecture
 
@@ -74,28 +86,54 @@ Wiring: `src/auth.config.ts` (edge-safe: Google provider + optional domain gate)
 (`PrismaAdapter`, `session.strategy="database"`, session callback attaching `user.division`+`user.isAdmin`)
 → `src/app/api/auth/[...nextauth]/route.ts`. Session types augmented in `src/types/next-auth.d.ts`.
 
-**Two routes:**
-- `/` (`src/app/page.tsx`, server) → passes `SessionUser | null` to `DigitalHygieneApp.tsx` → three
-  states: not signed in → Google sign-in; `division == null` → division-select gate (`setDivision`); else
-  the assessment (`createRecord`).
-- `/admin` (`src/app/admin/page.tsx`, server) → **route guard**: `redirect("/")` unless
-  `isAdmin(session.email)`; loads records via `record.service.listRecords()` and renders `AdminDashboard`.
+**Routes** (each section is its own URL so it can be linked / QR-coded on its own):
+- `/` (`src/app/page.tsx`) → signed in: `redirect("/cleanup")` (the first page); signed out: `redirect("/login")`.
+- `/login` (`src/app/login/page.tsx`) — the only place the sign-in card (`SignInGate`) appears. Signed in →
+  redirects to the sanitised `?callbackUrl=` or `/cleanup`. Auth.js's `pages.signIn/error` point here too, so
+  failed sign-ins arrive as `/login?error=…` (toasted by `AuthErrorToast`, which strips only `error`).
+- `src/app/(app)/` — route group for the 5 tabs, sharing `layout.tsx`: TopBar, and — once signed in with
+  a division — `AppHero` + `SectionTabs` (a `next/link` navbar, sticky under the TopBar). Signed in without a
+  division → only `DivisionGuard` (lazy `DivisionGate`). Signed out → the layout renders just `children`
+  (no shell), and each page redirects to `/login`.
+  - `/[group]` (`(app)/[group]/page.tsx`) — `cleanup | security | footprint | backup`
+    (`isGroupId()` else `notFound()`). Renders `GroupSection` with that group's items.
+  - `/survey` — the satisfaction survey (`SurveyPanel`); reachable any time.
+- `/admin` (`src/app/admin/page.tsx`, server) → **route guard**: signed out → `/login?callbackUrl=/admin`;
+  `redirect("/")` unless `isAdmin(session.email)`; loads records via `record.service.listRecords()` and renders `AdminDashboard`.
+- `/privacy`, `/deletion-instructions` — static public pages.
+
+**Every `(app)` page must guard itself** (`getSession()` from `src/app/session.ts`): no session →
+`redirect(loginPath("/<this page>"))`, session without a division → `return <DivisionGuard user=…/>`. A
+client-side tab click re-renders only the page segment, not the layout, so a layout-only check isn't enough.
+`loginPath()` puts the destination in `?callbackUrl=`, so a scanned section QR code still ends on that section
+after login. **Every `callbackUrl` must go through `safeCallbackPath()`** (`src/lib/safe-redirect.ts`: same-site
+paths only — no `//host`, backslashes, control chars, `/login` or `/api`), both before redirecting and before
+handing it to `signIn`; it's what prevents open redirects and a login↔page redirect loop. Never `redirect("/")`
+from an `(app)` page for a signed-out user — go to `/login`.
 
 **Admin backoffice is restricted to two emails** (`chawut.sa@gmail.com`, `kornwalairathwork@gmail.com` —
 `ADMIN_EMAILS` env, with the same pair as the built-in default). Enforced in 3 places: the `/admin` route
 redirect, the `/admin` nav link visibility, and admin-only actions (`clearRecords`,
 `adminCreateSurveyQuestion`/`adminUpdateSurveyQuestion`/`adminDeleteSurveyQuestion`).
 
-**Checklist grouping + gating:** the 6 `RISK_DATABASE` entries each carry a `groupId` (see
-`src/models/activity-group.ts` for the 4 groups: cleanup/security/footprint/backup) rendered as themed
-sections in `DigitalHygieneApp.tsx` (colors/icons in `src/lib/theme.ts`). The "เริ่มการวิเคราะห์" button is
-disabled until every group has at least one checked item (`groupComplete`/`allGroupsComplete`); the
-analysis result renders in a `Dialog` (not inline), chaining into `SatisfactionSurveyDialog` afterward
-unless the user already has a `SurveyResponse` (`hasSubmittedSurvey`).
+**Sections are independent.** Checklist items come from the DB (`checklist.service.listItems()`, admin-editable;
+each carries a `groupId` — see `src/models/activity-group.ts` for the 4 groups, colors/icons in
+`src/lib/theme.ts`). `GroupSection.tsx` owns one group's state: category checkboxes (master checkbox
+with indeterminate state + per-category accordion), the Digital Cleanup before/after storage (GB) inputs
+(kept across tabs in `src/lib/storage-draft.ts`), the analyze button (never gated) and the result
+`Dialog`. Scoring is per section (`src/lib/scoring.ts`: 100% = every category in that group checked).
+Each analyze calls `createRecord({groupId, …})` → **one `AssessmentRecord` per submit**, with
+`groupId` (NULL = a legacy record from before the split, which scored all groups together).
+`createRecord` re-validates `groupId` against the DB items, drops `selectedIds` outside the group,
+and sets `gaps` server-side.
 
 **Satisfaction survey:** `SurveyQuestion` rows are admin-editable (`SurveyAdmin.tsx`, mounted in
 `AdminDashboard.tsx`) with a `type` of `"rating"` (1-5) or `"text"`. `survey.service.listQuestions()`
-self-seeds 5 defaults the first time the table is empty — no separate seed script.
+self-seeds 5 defaults the first time the table is empty — no separate seed script. Users answer at
+`/survey` (`SurveyForm`). Separately, the `createRecord` result carries `surveyNudge`: true only on the
+submit that completes the last section (`record.service.listCompletedGroupIds` = distinct non-null
+groupIds for the user), the user hasn't answered, and questions exist — `GroupSection` then opens
+`SurveyNudgeDialog` after the result dialog closes. It never nags again (skipping is final).
 
 For a full domain-model + setup reference, see `CODEBASE-MAP.md`.
 
@@ -104,14 +142,41 @@ For a full domain-model + setup reference, see `CODEBASE-MAP.md`.
 - **No import cycle:** nothing `src/auth.ts` imports may import `@/auth`. `services/auth.service.ts` is
   pure (`isAdmin`/`ADMIN_EMAILS`, no `@/auth`); session resolution lives only in the actions/route layer.
 - `src/services/*`, `src/lib/prisma.ts`, `src/auth.ts` are server-side; never import them from a client
-  component. Client code uses `signIn`/`signOut` from `next-auth/react` and imports from `@/models/*` and
-  `@/lib/format` (client-safe).
+  component. Client code uses `signIn` from `next-auth/react` (only inside the lazy gates) and imports from
+  `@/models/*` and `@/lib/format` (client-safe). Signing out from the signed-in UI goes through the
+  `signOutAction` server action (see Performance conventions below).
 - `src/auth.config.ts` must stay Prisma-free (edge-safe); the adapter is wired only in `src/auth.ts`.
 - `src/lib/generated/**` is generated Prisma code — gitignored and excluded from ESLint. `prisma generate`
   output path is set in `prisma/schema.prisma` (`../src/lib/generated/prisma`).
 - UI text and domain content are in **Thai**; code identifiers are in English.
 - Tailwind is **v4**: styling tokens live in `app/globals.css` (`@theme`), `--font-sans` is IBM Plex
-  Sans Thai, and `postcss.config.js` uses `@tailwindcss/postcss`.
+  Sans Thai (the only font — a second, unused family was dropped: ~40 KB preloaded on every page),
+  and `postcss.config.js` uses `@tailwindcss/postcss`.
+- **`next/dynamic(..., {ssr:false})` is not allowed in Server Components** — keep such imports in a client
+  wrapper (see `RetentionNoticeGate.tsx`). `src/app/session.ts` (`getSession`, React-`cache()`d) is the one
+  place the app layer resolves the session for pages/layouts; actions use `requireUser()`.
+- **Performance conventions** (measured on the tab refactor — Lighthouse mobile, login-ed `/cleanup`: 89 → 94,
+  first-load JS 229 → 209 KB gz, DB queries per hard load 4 → 2). Don't undo these:
+  - **`DivisionGuard.tsx` is a client component on purpose**, and `DivisionGate` is a `next/dynamic` import
+    inside it. `next/dynamic` in a *Server Component* did NOT keep it out of the layout's chunk set (measured:
+    0 KB saved); a client-side `dynamic()` does. The sign-in card lives on its own `/login` route, so its JS
+    (and `next-auth/react`) never reaches the section tabs — don't import `SignInGate`, `DivisionGate`,
+    `next-auth/react` or Radix Select statically from `(app)/layout.tsx` or another `(app)` server file. Check with
+    the chunk list of a signed-in `/cleanup` after `pnpm build`.
+  - **The one-time retention notice flag is on the session** (`session.user.retentionNoticeSeen`, set in the
+    `auth.ts` session callback from the `User` row it already has) — the layout does no extra DB query.
+  - **`listItems()` / `listQuestions()` are cached in-process for 60 s** (`src/lib/cached-loader.ts`) — they're
+    read on every section page view but change only when an admin edits them. Every write path
+    (`create/update/deleteItem`, `create/update/deleteQuestion`) must call `invalidate()`; the arrays are
+    frozen/`readonly` and shared. Per-process only: with several server processes an edit can take up to the
+    TTL to show on the others. Never cache per-user data (session, `hasResponded`, `listCompletedGroupIds`).
+  - **`signOutAction` does not redirect** (a redirecting server action makes the client-side promise reject,
+    which a caller's try/catch misreads as failure): it just clears the session, and the caller navigates with
+    `window.location.assign`. A mid-section session expiry returns to the same tab with `?error=SessionExpired`
+    (shown by `AuthErrorToast`, since a toast raised before the reload would be wiped). Auth.js logs its own
+    `[auth][error] SignOutError` in that case (the DB session row is already gone) — harmless.
+- **`react-hooks/set-state-in-effect` is enforced** — don't `setState` in an effect to load client-only
+  data; use `useSyncExternalStore` (see `storage-draft.ts`).
 - **`Dialog`/`AlertDialog` content never appears in raw SSR HTML (curl)**, even with `open` forced true —
   both Radix (`Dialog`) and Base UI (`AlertDialog`) portal their popups client-side after hydration, so
   they only render in a real browser. To verify modal content, use **headless Chrome**

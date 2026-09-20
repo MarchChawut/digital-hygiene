@@ -90,9 +90,14 @@ model AssessmentRecord {
   // space, so "freed" = storageBeforeGb - storageAfterGb (see AdminDashboard.tsx).
   storageBeforeGb Float?
   storageAfterGb  Float?
+  // Which activity group (see src/models/activity-group.ts) this submission is for.
+  // Each section is submitted independently. NULL = a legacy record from before the
+  // sections were split, which scored all groups together.
+  groupId     String?
   createdAt   DateTime @default(now())
 
   @@index([email])
+  @@index([email, groupId])
   @@index([createdAt])
 }
 

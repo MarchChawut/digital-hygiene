@@ -7,4 +7,6 @@ export interface SessionUser {
   image: string | null;
   division: string | null;
   isAdmin: boolean;
+  // Whether the one-time data-retention notice has been acknowledged.
+  retentionNoticeSeen: boolean;
 }

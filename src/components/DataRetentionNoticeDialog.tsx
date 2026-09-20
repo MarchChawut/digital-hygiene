@@ -25,7 +25,7 @@ export function DataRetentionNoticeDialog({
   // This is a one-time compliance notice, not a casual dialog — every dismiss
   // path (button, backdrop, Escape) routes through the same acknowledge call
   // so the "seen" flag is always persisted, mirroring the showResult/closeResult
-  // chaining pattern used elsewhere in DigitalHygieneApp.tsx.
+  // chaining pattern used in GroupSection.tsx.
   const acknowledge = async () => {
     if (saving) return;
     setSaving(true);

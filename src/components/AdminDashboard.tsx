@@ -8,6 +8,8 @@ import type { AssessmentRecord } from "@/models/assessment";
 import type { SurveyQuestion, SurveyResponse } from "@/models/survey";
 import type { ChecklistItem } from "@/models/risk";
 import type { AuditLogEntry } from "@/models/audit";
+import { ACTIVITY_GROUPS, groupLabel, type GroupId } from "@/models/activity-group";
+import { GROUP_THEME } from "@/lib/theme";
 import { fmtTime, fmtDate, scorePill } from "@/lib/format";
 import { toast } from "sonner";
 import { Download, FolderArchive, ArrowLeft } from "lucide-react";
@@ -40,6 +42,15 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+// Which submissions the table + stat cards show. "legacy" = records saved before the
+// sections were split (groupId null), which scored every group together.
+type SectionFilter = "all" | "legacy" | GroupId;
+const SECTION_FILTERS: { id: SectionFilter; label: string }[] = [
+  { id: "all", label: "ทั้งหมด" },
+  ...ACTIVITY_GROUPS.map((g) => ({ id: g.id, label: g.label })),
+  { id: "legacy", label: groupLabel(null) },
+];
+
 export default function AdminDashboard({
   email,
   initialRecords,
@@ -68,18 +79,34 @@ export default function AdminDashboard({
     [initialChecklistItems]
   );
 
+  // Each submission covers one section, so its "gaps" are out of that section's item
+  // count — legacy records (no groupId) covered the whole checklist.
+  const totalFor = (r: AssessmentRecord) =>
+    r.groupId
+      ? initialChecklistItems.filter((i) => i.groupId === r.groupId).length
+      : initialChecklistItems.length;
+
+  const [sectionFilter, setSectionFilter] = useState<SectionFilter>("all");
+  const filteredRecords = useMemo(
+    () =>
+      records.filter((r) =>
+        sectionFilter === "all" ? true : sectionFilter === "legacy" ? r.groupId === null : r.groupId === sectionFilter
+      ),
+    [records, sectionFilter]
+  );
+
   // The submissions table only renders one page of rows at a time (the 30-day
   // retention sweep bounds long-term growth, but a busy window can still mean
   // hundreds/thousands of rows) — exportExcel() below still reads the full
-  // `records` array, so the export always contains everything regardless of
-  // what page is currently shown on screen.
+  // `records` array (not the section-filtered one), so the export always contains
+  // everything regardless of what page or filter is currently shown on screen.
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(0);
-  const totalPages = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
   const pagedRecords = useMemo(
-    () => records.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
-    [records, currentPage]
+    () => filteredRecords.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
+    [filteredRecords, currentPage]
   );
 
   const clearData = async () => {
@@ -170,6 +197,7 @@ export default function AdminDashboard({
       "ลำดับ",
       "อีเมลผู้ใช้",
       "กอง / หน่วยงาน",
+      "หมวดกิจกรรม",
       "วันที่/เวลา",
       "จำนวนช่องโหว่",
       "ระดับความเสี่ยง",
@@ -186,8 +214,9 @@ export default function AdminDashboard({
           i + 1,
           r.email,
           r.division || "-",
+          groupLabel(r.groupId),
           fmtTime(r.ts),
-          `${r.gaps}/${initialChecklistItems.length}`,
+          `${r.gaps}/${totalFor(r)}`,
           r.scoreLabel,
           r.storageBeforeGb ?? "-",
           r.storageAfterGb ?? "-",
@@ -236,25 +265,31 @@ export default function AdminDashboard({
 
   const users = useMemo(() => {
     const map: Record<string, { email: string; division: string; count: number; first: number }> = {};
-    [...records].reverse().forEach((r) => {
+    [...filteredRecords].reverse().forEach((r) => {
       if (!map[r.email]) map[r.email] = { email: r.email, division: r.division, count: 0, first: r.ts };
       map[r.email].count += 1;
       if (r.ts < map[r.email].first) map[r.email].first = r.ts;
     });
     return Object.values(map).sort((a, b) => b.count - a.count);
-  }, [records]);
+  }, [filteredRecords]);
 
   // Risky bands: new percent-formula labels + the legacy "วิกฤต" from older records.
   const RISKY_LABELS = ["วิกฤต", "เสี่ยงสูง", "ยังไม่ปลอดภัย"];
-  const critical = records.filter((r) => RISKY_LABELS.includes(r.scoreLabel)).length;
-  const avgGaps = records.length ? (records.reduce((a, r) => a + r.gaps, 0) / records.length).toFixed(1) : "0";
+  const critical = filteredRecords.filter((r) => RISKY_LABELS.includes(r.scoreLabel)).length;
+  // Mean share of items still unresolved. A raw average of gaps would mix per-section
+  // counts (a handful) with legacy whole-checklist counts, so it's a percentage instead;
+  // records whose section has since been emptied of items have no denominator and are skipped.
+  const gapShares = filteredRecords.flatMap((r) => (totalFor(r) > 0 ? [r.gaps / totalFor(r)] : []));
+  const avgGapPct = gapShares.length
+    ? `${Math.round((100 * gapShares.reduce((a, b) => a + b, 0)) / gapShares.length)}%`
+    : "-";
 
   // Storage freed (GB) — only defined when a submission has both before/after
   // values. Fields store used space, so freed = before − after (positive =
   // improvement; can be negative if used space grew instead of shrinking).
   const storageFreedGb = (r: AssessmentRecord): number | null =>
     r.storageBeforeGb != null && r.storageAfterGb != null ? r.storageBeforeGb - r.storageAfterGb : null;
-  const storageRecords = records.filter((r) => storageFreedGb(r) !== null);
+  const storageRecords = filteredRecords.filter((r) => storageFreedGb(r) !== null);
   const avgStorageFreed = storageRecords.length
     ? (storageRecords.reduce((a, r) => a + (storageFreedGb(r) ?? 0), 0) / storageRecords.length).toFixed(1)
     : null;
@@ -309,7 +344,7 @@ export default function AdminDashboard({
         email={email}
         onSignOut={() => signOut({ callbackUrl: "/" })}
         nav={
-          <Link href="/" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+          <Link href="/cleanup" className={buttonVariants({ variant: "ghost", size: "sm" })}>
             <ArrowLeft className="w-4 h-4" />
             หน้าหลัก
           </Link>
@@ -377,9 +412,9 @@ export default function AdminDashboard({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {[
             { label: "ผู้ใช้งาน", value: String(users.length), cls: "text-blue-600" },
-            { label: "การประเมิน", value: String(records.length), cls: "text-slate-900" },
+            { label: "จำนวนการส่งผล", value: String(filteredRecords.length), cls: "text-slate-900" },
             { label: "เสี่ยงสูง", value: String(critical), cls: critical ? "text-red-600" : "text-slate-900" },
-            { label: "ช่องโหว่เฉลี่ย", value: avgGaps, cls: "text-slate-900" },
+            { label: "ช่องโหว่คงเหลือเฉลี่ย", value: avgGapPct, cls: "text-slate-900" },
             { label: "พื้นที่เฉลี่ยที่ลดได้ (GB)", value: avgStorageFreed ?? "-", cls: "text-slate-900" },
           ].map((s) => (
             <Card key={s.label} className="rounded-2xl py-0">
@@ -395,16 +430,34 @@ export default function AdminDashboard({
         <Card className="rounded-3xl shadow-xl overflow-hidden py-0">
           <div className="px-7 py-6 border-b border-slate-100 flex items-center justify-between">
             <h2 className="text-[17px] font-bold text-slate-800">บันทึกการประเมิน (Submissions)</h2>
-            <span className="text-sm text-slate-400">{records.length} รายการ</span>
+            <span className="text-sm text-slate-400">{filteredRecords.length} รายการ</span>
           </div>
 
-          {records.length ? (
+          <div className="flex flex-wrap gap-2 px-7 py-3.5 border-b border-slate-100">
+            {SECTION_FILTERS.map((f) => (
+              <Button
+                key={f.id}
+                size="sm"
+                variant={sectionFilter === f.id ? "default" : "outline"}
+                aria-pressed={sectionFilter === f.id}
+                onClick={() => {
+                  setSectionFilter(f.id);
+                  setPage(0);
+                }}
+              >
+                {f.label}
+              </Button>
+            ))}
+          </div>
+
+          {filteredRecords.length ? (
             <div className="overflow-x-auto">
-              <Table className="min-w-[920px]">
+              <Table className="min-w-[1000px]">
                 <TableHeader>
                   <TableRow className="bg-slate-50">
                     <TableHead>อีเมลผู้ใช้</TableHead>
                     <TableHead>กอง / หน่วยงาน</TableHead>
+                    <TableHead>หมวดกิจกรรม</TableHead>
                     <TableHead>เวลา</TableHead>
                     <TableHead>ช่องโหว่</TableHead>
                     <TableHead>ระดับความเสี่ยง</TableHead>
@@ -418,10 +471,22 @@ export default function AdminDashboard({
                       <TableRow key={r.id}>
                         <TableCell className="font-semibold text-slate-900">{r.email}</TableCell>
                         <TableCell className="text-slate-600 text-[13px]">{r.division || "-"}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="secondary"
+                            className={
+                              r.groupId
+                                ? `${GROUP_THEME[r.groupId].chipBg} ${GROUP_THEME[r.groupId].chipText}`
+                                : "text-slate-500"
+                            }
+                          >
+                            {groupLabel(r.groupId)}
+                          </Badge>
+                        </TableCell>
                         <TableCell className="text-slate-500 text-[13px]">{fmtTime(r.ts)}</TableCell>
                         <TableCell className="text-slate-700 font-semibold">
                           {r.gaps}
-                          <span className="text-slate-400">/{initialChecklistItems.length}</span>
+                          <span className="text-slate-400">/{totalFor(r)}</span>
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={scorePill(r.scoreLabel)}>
@@ -438,7 +503,7 @@ export default function AdminDashboard({
               </Table>
             </div>
           ) : null}
-          {records.length > PAGE_SIZE ? (
+          {filteredRecords.length > PAGE_SIZE ? (
             <div className="flex items-center justify-between gap-3 px-7 py-4 border-t border-slate-100">
               <span className="text-xs text-slate-400">
                 หน้า {currentPage + 1} จาก {totalPages}
@@ -463,10 +528,12 @@ export default function AdminDashboard({
               </div>
             </div>
           ) : null}
-          {!records.length && (
+          {!filteredRecords.length && (
             <div className="text-center py-14 px-5">
               <FolderArchive className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-              <p className="text-slate-700 font-semibold">ยังไม่มีข้อมูลการประเมิน</p>
+              <p className="text-slate-700 font-semibold">
+                {records.length ? "ไม่มีข้อมูลในหมวดที่เลือก" : "ยังไม่มีข้อมูลการประเมิน"}
+              </p>
               <p className="text-slate-400 text-[13px] mt-1.5">
                 เมื่อผู้ใช้เข้าประเมินและกด &quot;เริ่มการวิเคราะห์&quot; ผลลัพธ์จะปรากฏที่นี่
               </p>

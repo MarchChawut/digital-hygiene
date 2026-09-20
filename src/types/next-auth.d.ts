@@ -7,6 +7,8 @@ declare module "next-auth" {
       id: string;
       division: string | null;
       isAdmin: boolean;
+      // true once the user has acknowledged the one-time 30-day data-retention notice.
+      retentionNoticeSeen: boolean;
     } & DefaultSession["user"];
   }
 
