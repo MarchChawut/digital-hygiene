@@ -71,6 +71,7 @@ export function SurveyForm({
               value={(answers[q.id] as string) ?? ""}
               onChange={(e) => setAnswer(q.id, e.target.value)}
               placeholder="ความคิดเห็นเพิ่มเติม (ไม่บังคับ)"
+              maxLength={1000}
               rows={3}
             />
           )}

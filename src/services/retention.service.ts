@@ -29,18 +29,23 @@ export async function runRetentionCleanup(
   records: number;
   surveyResponses: number;
   expiredTokens: number;
+  expiredSessions: number;
   auditLogs: number;
 }> {
-  const [records, surveyResponses, expiredTokens, auditLogs] = await Promise.all([
+  const [records, surveyResponses, expiredTokens, expiredSessions, auditLogs] = await Promise.all([
     prisma.assessmentRecord.deleteMany({ where: { createdAt: { lt: cutoff } } }),
     prisma.surveyResponse.deleteMany({ where: { createdAt: { lt: cutoff } } }),
     prisma.verificationToken.deleteMany({ where: { expires: { lt: new Date() } } }),
+    // Auth.js only removes an expired session when that exact token is presented again, so
+    // abandoned ones (every phone that scanned a QR code once) would otherwise pile up.
+    prisma.session.deleteMany({ where: { expires: { lt: new Date() } } }),
     prisma.auditLog.deleteMany({ where: { createdAt: { lt: auditCutoff } } }),
   ]);
   return {
     records: records.count,
     surveyResponses: surveyResponses.count,
     expiredTokens: expiredTokens.count,
+    expiredSessions: expiredSessions.count,
     auditLogs: auditLogs.count,
   };
 }

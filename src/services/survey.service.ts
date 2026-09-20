@@ -64,8 +64,16 @@ export async function deleteQuestion(id: string): Promise<void> {
   questionsLoader.invalidate();
 }
 
-export async function createResponse(email: string, answers: SurveyAnswers): Promise<void> {
-  await prisma.surveyResponse.create({ data: { email, answers } });
+// One response per address — enforced by a unique index, so two concurrent submissions from the
+// same account can't both succeed. Returns false if this address had already responded.
+export async function createResponse(email: string, answers: SurveyAnswers): Promise<boolean> {
+  try {
+    await prisma.surveyResponse.create({ data: { email, answers } });
+    return true;
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2002") return false; // unique violation
+    throw err;
+  }
 }
 
 export async function hasResponded(email: string): Promise<boolean> {
@@ -73,9 +81,12 @@ export async function hasResponded(email: string): Promise<boolean> {
   return count > 0;
 }
 
-// All submitted survey responses, newest first — used by the admin export.
-export async function listResponses(): Promise<SurveyResponse[]> {
-  const rows = await prisma.surveyResponse.findMany({ orderBy: { createdAt: "desc" } });
+// Bounded for the same reason as record.service's ADMIN_MAX_RECORDS.
+export const ADMIN_MAX_RESPONSES = 2000;
+
+// Latest submitted survey responses, newest first — used by the admin dashboard and export.
+export async function listResponses(limit: number = ADMIN_MAX_RESPONSES): Promise<SurveyResponse[]> {
+  const rows = await prisma.surveyResponse.findMany({ orderBy: { createdAt: "desc" }, take: limit });
   return rows.map((r) => ({
     id: r.id,
     email: r.email,

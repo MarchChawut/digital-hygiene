@@ -31,10 +31,20 @@ function toModel(row: {
   };
 }
 
-// All submissions, newest first.
-export async function listRecords(): Promise<AssessmentRecord[]> {
-  const rows = await prisma.assessmentRecord.findMany({ orderBy: { createdAt: "desc" } });
+// The admin page ships this list to the browser whole, so it is bounded (the 30-day retention
+// sweep also bounds it over time, but a busy window — or one abusive account — should not be
+// able to make /admin arbitrarily large).
+export const ADMIN_MAX_RECORDS = 5000;
+
+// Latest submissions, newest first.
+export async function listRecords(limit: number = ADMIN_MAX_RECORDS): Promise<AssessmentRecord[]> {
+  const rows = await prisma.assessmentRecord.findMany({ orderBy: { createdAt: "desc" }, take: limit });
   return rows.map(toModel);
+}
+
+// How many submissions this address made since `since` — used to throttle createRecord.
+export async function countRecordsSince(email: string, since: Date): Promise<number> {
+  return prisma.assessmentRecord.count({ where: { email, createdAt: { gte: since } } });
 }
 
 // Save one submission. Caller supplies the (already authorised) email + division.

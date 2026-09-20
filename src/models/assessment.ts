@@ -21,12 +21,11 @@ export interface AssessmentRecord {
   storageAfterGb: number | null;
 }
 
-// email + division are derived server-side from the authenticated session,
-// so the client only sends the assessment result.
+// email + division are derived server-side from the authenticated session, and the score
+// (percent, label, gaps) is recomputed server-side from `selectedIds`, so the client only
+// says which section it is and which items it left unchecked.
 export interface CreateRecordInput {
   groupId: GroupId;
-  gaps: number;
-  scoreLabel: string;
   selectedIds: string[];
   storageBeforeGb?: number;
   storageAfterGb?: number;
@@ -43,4 +42,4 @@ export type CreateRecordResult =
       completedGroupIds: GroupId[];
       surveyNudge: boolean;
     }
-  | { ok: false; reason: "unauthenticated" };
+  | { ok: false; reason: "unauthenticated" | "rate_limited" };

@@ -23,6 +23,11 @@ export function DivisionGate({ name, email }: { name: string | null; email: stri
     setSavingDivision(true);
     try {
       const result = await setDivision(divisionChoice);
+      if (!result.ok && result.reason === "already_set") {
+        // Another tab already chose one — just move on with what's saved.
+        router.refresh();
+        return;
+      }
       if (!result.ok) {
         toast.error("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง");
         // A refresh alone isn't enough here — a structurally-broken session (a valid

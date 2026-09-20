@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { unstable_rethrow } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { isAdmin } from "@/services/auth.service";
@@ -10,6 +11,10 @@ import * as checklistService from "@/services/checklist.service";
 import * as retentionService from "@/services/retention.service";
 import * as auditService from "@/services/audit.service";
 import { createLogger } from "@/lib/logger";
+import { groupByCategory, scoreSection } from "@/lib/scoring";
+import { scoreFor } from "@/lib/format";
+import { validateSurveyAnswers } from "@/lib/survey-validation";
+import { isSafeAsciiEmail } from "@/lib/signin-policy";
 import { DIVISIONS } from "@/models/division";
 import { GROUP_IDS, isGroupId } from "@/models/activity-group";
 import type { CreateRecordInput, CreateRecordResult } from "@/models/assessment";
@@ -71,7 +76,7 @@ export async function signOutAction(): Promise<void> {
 // client can distinguish "please sign in again" from an unexpected failure.
 export async function setDivision(
   division: string
-): Promise<{ ok: true } | { ok: false; reason: "unauthenticated" }> {
+): Promise<{ ok: true } | { ok: false; reason: "unauthenticated" | "already_set" }> {
   let user;
   try {
     user = await requireUser();
@@ -81,13 +86,23 @@ export async function setDivision(
   if (!DIVISIONS.includes(division as (typeof DIVISIONS)[number])) {
     throw new Error("Invalid division");
   }
-  await userService.updateUserDivision(user.id, division);
+  const outcome = await userService.setDivisionOnce(user.id, division);
+  if (outcome === "already_set") {
+    log.warn("division_change_refused", { userId: user.id });
+    return { ok: false, reason: "already_set" };
+  }
   return { ok: true };
 }
 
-// Save one section's submission. email + division come from the session, not the
-// client. The section and the items counted against it are re-validated here, so a
-// tampered payload can't attach other sections' items or inflate `gaps`.
+// Most submissions one address may make per hour (across all sections, re-submits included) —
+// generous for real use, but stops one account flooding the table (and /admin) in a loop.
+const RECORDS_PER_HOUR_LIMIT = 30;
+const MAX_GB = 100_000;
+
+// Save one section's submission. email + division come from the session, not the client. The
+// client only reports WHICH ITEMS it left unchecked; the section, the valid items, the score,
+// the label and `gaps` are all recomputed here, so a tampered payload can neither attach other
+// sections' items nor forge "ปลอดภัยสูงสุด" (the label used to be trusted as sent).
 export async function createRecord(input: CreateRecordInput): Promise<CreateRecordResult> {
   let user;
   try {
@@ -98,23 +113,40 @@ export async function createRecord(input: CreateRecordInput): Promise<CreateReco
   if (!user.division) throw new Error("Division not set");
   if (!isGroupId(input.groupId)) throw new Error("Invalid group");
 
-  const [items, completedBefore] = await Promise.all([
+  const [items, completedBefore, recentCount] = await Promise.all([
     checklistService.listItems(),
     recordService.listCompletedGroupIds(user.email),
+    recordService.countRecordsSince(user.email, new Date(Date.now() - 60 * 60 * 1000)),
   ]);
-  const groupItemIds = new Set(items.filter((i) => i.groupId === input.groupId).map((i) => i.id));
-  if (groupItemIds.size === 0) throw new Error("Group has no checklist items");
-  const selectedIds = [...new Set(input.selectedIds)].filter((id) => groupItemIds.has(id));
+  if (recentCount >= RECORDS_PER_HOUR_LIMIT) {
+    log.warn("record_rate_limited", { userId: user.id, recentCount });
+    return { ok: false, reason: "rate_limited" };
+  }
+  const groupItems = items.filter((i) => i.groupId === input.groupId);
+  if (groupItems.length === 0) throw new Error("Group has no checklist items");
+
+  // A category counts as done only if none of its items is reported at risk; the stored risks
+  // are then exactly the items of the unchecked categories (same meaning as always).
+  const reported = new Set(
+    Array.isArray(input.selectedIds) ? input.selectedIds.slice(0, 1000).filter((id) => typeof id === "string") : []
+  );
+  const categories = groupByCategory(groupItems);
+  const checked = Object.fromEntries(
+    categories.map((c) => [c.category, !c.items.some((i) => reported.has(i.id))])
+  );
+  const { percent, riskIds: selectedIds } = scoreSection(categories, checked);
+  // Storage GB belongs to the Digital Cleanup section only.
+  const isCleanup = input.groupId === "cleanup";
 
   const record = await recordService.createRecord({
     email: user.email,
     division: user.division,
     groupId: input.groupId,
     gaps: selectedIds.length,
-    scoreLabel: input.scoreLabel,
+    scoreLabel: scoreFor(percent).label,
     selectedIds,
-    storageBeforeGb: sanitizeGb(input.storageBeforeGb),
-    storageAfterGb: sanitizeGb(input.storageAfterGb),
+    storageBeforeGb: isCleanup ? sanitizeGb(input.storageBeforeGb) : undefined,
+    storageAfterGb: isCleanup ? sanitizeGb(input.storageAfterGb) : undefined,
   });
   log.info("assessment.submitted", {
     recordId: record.id,
@@ -139,10 +171,11 @@ export async function createRecord(input: CreateRecordInput): Promise<CreateReco
   return { ok: true, record, completedGroupIds, surveyNudge };
 }
 
-// Optional, self-reported GB values from the client — not required to submit,
-// so bad/negative/non-finite input is dropped rather than rejected outright.
+// Optional, self-reported GB values from the client — not required to submit, so bad input
+// (negative, non-finite, or absurdly large — 1e308 used to be stored and wrecked the admin's
+// averages) is dropped rather than rejected outright.
 function sanitizeGb(n?: number): number | undefined {
-  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : undefined;
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= MAX_GB ? n : undefined;
 }
 
 // Delete every submission — admin only.
@@ -166,6 +199,43 @@ export async function acknowledgeDataRetentionNotice(): Promise<void> {
   await userService.acknowledgeRetentionNotice(user.id);
 }
 
+// Erase everything held for one address, on request (the promise made on /deletion-instructions).
+// Admin only. The audit row records WHO erased and a short hash of the address — not the address.
+export async function adminDeleteUserData(email: string): Promise<{
+  userDeleted: boolean;
+  records: number;
+  surveyResponses: number;
+  auditRows: number;
+}> {
+  const admin = await requireAdmin("user_data.deleted");
+  const target = String(email ?? "").trim().toLowerCase();
+  if (!isSafeAsciiEmail(target)) throw new Error("Invalid e-mail");
+  const result = await userService.deleteAllDataForEmail(target);
+  await auditService.recordAudit({
+    actorEmail: admin.email,
+    action: "user_data.deleted",
+    targetId: createHash("sha256").update(target).digest("hex").slice(0, 16),
+    metadata: result,
+  });
+  return result;
+}
+
+// Let one user choose their division again — for a wrong pick, which is otherwise final. Admin only;
+// audited (who + a hash of the address). Records already saved keep the division they were filed under.
+export async function adminResetDivision(email: string): Promise<{ reset: boolean }> {
+  const admin = await requireAdmin("division.reset");
+  const target = String(email ?? "").trim().toLowerCase();
+  if (!isSafeAsciiEmail(target)) throw new Error("Invalid e-mail");
+  const reset = await userService.resetDivision(target);
+  await auditService.recordAudit({
+    actorEmail: admin.email,
+    action: "division.reset",
+    targetId: createHash("sha256").update(target).digest("hex").slice(0, 16),
+    metadata: { found: reset },
+  });
+  return { reset };
+}
+
 // Manually run the 30-day cleanup sweep now — admin only. The sweep also runs
 // automatically on a daily interval (src/instrumentation.ts); this exists for
 // operator visibility/testing.
@@ -173,6 +243,7 @@ export async function runRetentionCleanupNow(): Promise<{
   records: number;
   surveyResponses: number;
   expiredTokens: number;
+  expiredSessions: number;
   auditLogs: number;
 }> {
   const user = await requireAdmin("retention.manual_sweep");
@@ -191,10 +262,14 @@ export async function runRetentionCleanupNow(): Promise<{
 
 export async function submitSurveyResponse(answers: SurveyAnswers): Promise<void> {
   const user = await requireUser();
-  // The survey is a standalone page now, so two open tabs could both submit — one
-  // response per user, same as the old dialog's "already responded" check.
+  // Only answers to real questions, with the right shape and bounded size, are stored — the
+  // raw payload is untrusted (it used to be saved verbatim: 900 KB strings, thousands of keys).
+  const checked = validateSurveyAnswers(answers, await surveyService.listQuestions());
+  if (!checked.ok) throw new Error("Invalid survey answers");
+  // One response per address: a cheap early exit, and the unique index makes concurrent
+  // submissions from the same account safe too (createResponse returns false on a duplicate).
   if (await surveyService.hasResponded(user.email)) return;
-  await surveyService.createResponse(user.email, answers);
+  await surveyService.createResponse(user.email, checked.answers);
 }
 
 // Admin-only: manage survey questions.

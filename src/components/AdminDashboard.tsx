@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { clearRecords, runRetentionCleanupNow } from "@/app/actions";
+import { stripUnsafeText } from "@/lib/survey-validation";
 import type { AssessmentRecord } from "@/models/assessment";
 import type { SurveyQuestion, SurveyResponse } from "@/models/survey";
 import type { ChecklistItem } from "@/models/risk";
@@ -19,6 +20,8 @@ import { BottomNav } from "@/components/BottomNav";
 import { SurveyAdmin } from "@/components/SurveyAdmin";
 import { ChecklistAdmin } from "@/components/ChecklistAdmin";
 import { AuditLogPanel } from "@/components/AuditLogPanel";
+import { UserDataDeletion } from "@/components/UserDataDeletion";
+import { DivisionReset } from "@/components/DivisionReset";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -58,6 +61,8 @@ export default function AdminDashboard({
   initialSurveyResponses,
   initialChecklistItems,
   initialAuditLog,
+  recordsTruncated = false,
+  responsesTruncated = false,
 }: {
   email: string;
   initialRecords: AssessmentRecord[];
@@ -65,6 +70,9 @@ export default function AdminDashboard({
   initialSurveyResponses: SurveyResponse[];
   initialChecklistItems: ChecklistItem[];
   initialAuditLog: AuditLogEntry[];
+  // true when the server bounded the list and older rows were left out (see ADMIN_MAX_* in the services)
+  recordsTruncated?: boolean;
+  responsesTruncated?: boolean;
 }) {
   const [records, setRecords] = useState<AssessmentRecord[]>(initialRecords);
   const [surveyResponses, setSurveyResponses] = useState<SurveyResponse[]>(initialSurveyResponses);
@@ -152,7 +160,7 @@ export default function AdminDashboard({
         ...prev,
       ]);
       toast.success(
-        `ลบข้อมูลที่เกิน 30 วันแล้ว: ผลการประเมิน ${result.records} รายการ, แบบสอบถาม ${result.surveyResponses} รายการ`
+        `ลบข้อมูลที่เกิน 30 วันแล้ว: ผลการประเมิน ${result.records} รายการ, แบบสอบถาม ${result.surveyResponses} รายการ, session ที่หมดอายุ ${result.expiredSessions} รายการ`
       );
     } catch {
       toast.error("ไม่สามารถรันการลบข้อมูลได้");
@@ -169,11 +177,11 @@ export default function AdminDashboard({
       return;
     }
     const esc = (s: unknown) =>
-      String(s ?? "")
-        // XML 1.0 forbids most C0 control chars outright (no escape makes them legal) —
-        // free-text survey answers can carry these from pasted Word/PDF content, and
-        // just one would make Excel refuse to open the whole workbook.
-        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
+      // XML 1.0 forbids most C0 control chars, U+FFFE/U+FFFF and lone surrogates outright (no
+      // escape makes them legal) — free-text answers can carry them (pasted Word/PDF content, or
+      // deliberately), and just one makes Excel refuse to open the whole workbook. stripUnsafeText
+      // removes them all (it is the same cleaner the server applies to survey text).
+      stripUnsafeText(String(s ?? ""))
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
@@ -426,6 +434,15 @@ export default function AdminDashboard({
           ))}
         </div>
 
+        <DivisionReset />
+
+        <UserDataDeletion
+          onDeleted={(deletedEmail) => {
+            setRecords((prev) => prev.filter((r) => r.email !== deletedEmail));
+            setSurveyResponses((prev) => prev.filter((r) => r.email !== deletedEmail));
+          }}
+        />
+
         {/* Submissions */}
         <Card className="rounded-3xl shadow-xl overflow-hidden py-0">
           <div className="px-7 py-6 border-b border-slate-100 flex items-center justify-between">
@@ -433,6 +450,11 @@ export default function AdminDashboard({
             <span className="text-sm text-slate-400">{filteredRecords.length} รายการ</span>
           </div>
 
+          {(recordsTruncated || responsesTruncated) && (
+            <p className="px-7 py-2.5 text-xs text-amber-700 bg-amber-50 border-b border-amber-100">
+              แสดงเฉพาะรายการล่าสุดเท่านั้น (ผลการประเมินล่าสุด 5,000 รายการ / แบบสอบถามล่าสุด 2,000 รายการ) — ข้อมูลที่เก่ากว่าไม่ถูกโหลดและไม่อยู่ในไฟล์ Export
+            </p>
+          )}
           <div className="flex flex-wrap gap-2 px-7 py-3.5 border-b border-slate-100">
             {SECTION_FILTERS.map((f) => (
               <Button

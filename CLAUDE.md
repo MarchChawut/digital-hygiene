@@ -95,12 +95,24 @@ Wiring: `src/auth.config.ts` (edge-safe: Google provider + optional domain gate)
   a division — `AppHero` + `SectionTabs` (a `next/link` navbar, sticky under the TopBar). Signed in without a
   division → only `DivisionGuard` (lazy `DivisionGate`). Signed out → the layout renders just `children`
   (no shell), and each page redirects to `/login`.
-  - `/[group]` (`(app)/[group]/page.tsx`) — `cleanup | security | footprint | backup`
-    (`isGroupId()` else `notFound()`). Renders `GroupSection` with that group's items.
+  - `/cleanup`, `/security`, `/footprint`, `/backup` — four explicit route folders under `(app)/`, each a
+    one-line page rendering the shared `GroupPage` (`(app)/GroupPage.tsx` → `GroupSection` with that
+    group's items). **Not a dynamic `[group]` segment**: that also matched `/favicon.ico`, `/robots.txt`,
+    `/foo` … and ran the whole layout (a session lookup, 2 DB queries) before the page could 404, and
+    answered 200 instead of 404. Keep the folders in sync with `GROUP_IDS` (`src/models/activity-group.ts`).
   - `/survey` — the satisfaction survey (`SurveyPanel`); reachable any time.
 - `/admin` (`src/app/admin/page.tsx`, server) → **route guard**: signed out → `/login?callbackUrl=/admin`;
   `redirect("/")` unless `isAdmin(session.email)`; loads records via `record.service.listRecords()` and renders `AdminDashboard`.
-- `/privacy`, `/deletion-instructions` — static public pages.
+- `/privacy`, `/deletion-instructions` — static public pages. `icon.svg` and `robots.ts` are static too.
+- **`src/proxy.ts`** (Next 16's `middleware`) — an early, render-free **307** for signed-out browser
+  navigations to `/`, the 5 tabs and `/admin` → `/login?callbackUrl=…` (and `/` → `/cleanup` when a cookie
+  exists). Without it the redirect runs inside a streamed render and the browser gets a 200 page with a
+  `<meta refresh>` — it downloaded the whole app before being sent on (QR-scan path measured: Lighthouse 87 →
+  94, FCP 1.66 → 1.06 s, 46 → 26 requests). It is an **optimisation, not authorisation**: it only checks that a
+  session cookie *exists* (either name), never validates it — the pages' `getSession()` guards stay. It leaves
+  POST/Server Actions, RSC/prefetch requests and non-HTML requests alone, and it must NOT redirect `/login`
+  away (a stale cookie would loop). Its `Location` is built from `AUTH_URL` (the proxy runtime rejects
+  relative URLs, and `request.url`/`Host`/`X-Forwarded-Host` aren't trustworthy behind the tunnel).
 
 **Every `(app)` page must guard itself** (`getSession()` from `src/app/session.ts`): no session →
 `redirect(loginPath("/<this page>"))`, session without a division → `return <DivisionGuard user=…/>`. A
@@ -124,8 +136,10 @@ with indeterminate state + per-category accordion), the Digital Cleanup before/a
 `Dialog`. Scoring is per section (`src/lib/scoring.ts`: 100% = every category in that group checked).
 Each analyze calls `createRecord({groupId, …})` → **one `AssessmentRecord` per submit**, with
 `groupId` (NULL = a legacy record from before the split, which scored all groups together).
-`createRecord` re-validates `groupId` against the DB items, drops `selectedIds` outside the group,
-and sets `gaps` server-side.
+`createRecord` trusts nothing but the section id and WHICH items were left unchecked: it re-validates
+`groupId`, drops ids outside the group, and **recomputes the score, `scoreLabel` and `gaps` itself**
+(`lib/scoring.ts` + `scoreFor`), clamps GB (0–100 000, Cleanup only) and throttles to 30 submits/hour/address
+(`{ok:false, reason:"rate_limited"}`).
 
 **Satisfaction survey:** `SurveyQuestion` rows are admin-editable (`SurveyAdmin.tsx`, mounted in
 `AdminDashboard.tsx`) with a `type` of `"rating"` (1-5) or `"text"`. `survey.service.listQuestions()`
@@ -155,8 +169,40 @@ For a full domain-model + setup reference, see `CODEBASE-MAP.md`.
 - **`next/dynamic(..., {ssr:false})` is not allowed in Server Components** — keep such imports in a client
   wrapper (see `RetentionNoticeGate.tsx`). `src/app/session.ts` (`getSession`, React-`cache()`d) is the one
   place the app layer resolves the session for pages/layouts; actions use `requireUser()`.
-- **Performance conventions** (measured on the tab refactor — Lighthouse mobile, login-ed `/cleanup`: 89 → 94,
-  first-load JS 229 → 209 KB gz, DB queries per hard load 4 → 2). Don't undo these:
+- **Security conventions** (from the pentest; the test scripts live outside the repo — don't undo):
+  - **Identity = an exact, plain-ASCII e-mail.** `lib/signin-policy.ts` (pure, unit-tested with
+    `node --experimental-strip-types`) rejects non-ASCII / look-alike / multi-address strings and Google's
+    `email_verified === false`, and applies the optional `ALLOWED_EMAIL_DOMAIN` gate (Google only). The e-mail
+    columns (`User.email`, `AssessmentRecord.email`, `SurveyResponse.email`, `AuditLog.actorEmail`,
+    `VerificationToken.identifier`) are **`utf8mb4_bin`** (migration `…harden_identity_and_survey_uniqueness`;
+    Prisma can't express collations, so it is raw SQL): the old case/accent-insensitive collation let a magic link for
+    `chawut.sa@gmaîl.com` sign in as the admin row. `src/auth.ts`'s adapter lower-cases on lookup/create.
+  - **`src/auth.ts` `signIn` MUST call `authConfig.callbacks.signIn` first** (it only adds the Prisma-dependent
+    per-address link cap, 3 unexpired links) — a plain override silently disables the policy above. The Resend
+    link lives 15 min. `auth.config.ts` must stay Prisma-free.
+  - **The `session` callback builds its result from scratch.** Returning the input leaked the raw `sessionToken`
+    (defeating HttpOnly) and the whole `User` row through `GET /api/auth/session`.
+  - **The client is untrusted.** Survey answers go through `lib/survey-validation.ts` (real questions only,
+    integer 1–5, text ≤ 1000 chars, XML-unsafe characters stripped); one response per address is a **DB unique
+    index** (`SurveyResponse.email`), duplicates are ignored; `setDivision` writes only while the division is unset
+    (`setDivisionOnce`); admin lists are bounded (`ADMIN_MAX_RECORDS`/`ADMIN_MAX_RESPONSES`) and the export's `esc()`
+    uses the same `stripUnsafeText`.
+  - **A wrong division pick is final for the user** (`setDivisionOnce`); an admin fixes it with `adminResetDivision`
+    (UI: `DivisionReset.tsx` on `/admin`, audited) — the user sees the division gate again, saved records keep the old one.
+  - **Erasure and retention.** `adminDeleteUserData` (admin only; UI in `UserDataDeletion.tsx`) removes an address's
+    account, sessions, records, survey answer and pending links and de-identifies its audit rows; the daily sweep also
+    deletes expired sessions. Google OAuth tokens are never stored (adapter `linkAccount`). Keep `/privacy` in sync.
+  - **Headers** are set in `next.config.js` (`frame-ancestors 'none'`, nosniff, referrer/permissions policy, HSTS,
+    no `X-Powered-By`). A full `script-src` CSP needs a per-request nonce — not done.
+  - **Not code — deployment.** Rate limiting (Cloudflare rule on `POST /api/auth/signin/*`, ~5/min/IP, plus
+    Turnstile on the Guest form) and `AUTH_URL="https://…"` in production's env must be set by the operator; the
+    in-app link cap only bounds one address at a time.
+- **Performance conventions** (measured — Lighthouse mobile, login-ed `/cleanup`: 89 → 94, first-load JS
+  229 → 198 KB gz, DB queries per page load / tab switch 4 → 2; QR-scan path 87 → 94). Don't undo these:
+  - **Keep the root `src/app/loading.tsx`.** Removing it looked free in the lab (DB ≈ 0 ms) but with a DB 60 ms
+    away (Tailscale-like) TTFB went 5 → 255 ms and FCP 784 → 872 ms: that boundary streams the shell while the
+    layout waits for its session lookup. (Removing it is also NOT what gives real 307/404 — explicit routes and
+    `src/proxy.ts` do.)
   - **`DivisionGuard.tsx` is a client component on purpose**, and `DivisionGate` is a `next/dynamic` import
     inside it. `next/dynamic` in a *Server Component* did NOT keep it out of the layout's chunk set (measured:
     0 KB saved); a client-side `dynamic()` does. The sign-in card lives on its own `/login` route, so its JS

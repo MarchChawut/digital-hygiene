@@ -46,14 +46,17 @@ nextjs-digital-hygiene/
 │   │   │   ├── layout.tsx  # TopBar + (ถ้าพร้อม) AppHero + SectionTabs; login แล้วแต่ไม่มีกอง → DivisionGuard อย่างเดียว; ยังไม่ login → คืนแค่ children (แต่ละ page redirect ไป /login)
 │   │   │   ├── DivisionGuard.tsx # ("use client" โดยตั้งใจ) ไม่มีกอง → DivisionGate โหลดแบบ next/dynamic เพื่อไม่ให้ JS ไปกับทุก tab (ใช้ทั้ง layout และทุก page)
 │   │   │   ├── loading.tsx # skeleton ภายใน shell ตอนสลับ tab
-│   │   │   ├── [group]/page.tsx # /cleanup|security|footprint|backup → GroupSection (isGroupId ไม่ผ่าน → notFound)
+│   │   │   ├── GroupPage.tsx # หน้าหมวดที่ใช้ร่วมกัน: ไม่ login → redirect /login, ไม่มีกอง → DivisionGuard, ปกติ → GroupSection
+│   │   │   ├── cleanup|security|footprint|backup/page.tsx # 4 route ที่ระบุชื่อตรงๆ (ไม่ใช้ [group] เพราะ [group] รับ /favicon.ico /foo ฯลฯ แล้วรัน layout+ตรวจ session ทุกครั้ง)
 │   │   │   └── survey/page.tsx  # /survey → SurveyPanel
 │   │   ├── privacy/page.tsx              # ⭐ หน้านโยบายความเป็นส่วนตัว (public, สำหรับ Facebook/แนวทาง compliance)
 │   │   ├── deletion-instructions/page.tsx # ⭐ หน้าวิธีขอลบข้อมูล (public)
 │   │   ├── admin/
 │   │   │   ├── page.tsx    # ⭐ /admin — server guard: redirect ถ้าไม่ใช่ admin, โหลด records+survey+checklist แล้ว render AdminDashboard
 │   │   │   └── loading.tsx # route-level loading state สำหรับ /admin
-│   │   ├── actions.ts      # Server Actions (thin): setDivision / createRecord / clearRecords / retention / survey / checklist CRUD → เรียก services
+│   │   ├── icon.svg / robots.ts   # static (ไม่ตกไปที่การ render หน้า)
+│   │   ├── actions.ts      # Server Actions (thin): setDivision / createRecord / clearRecords / retention / adminDeleteUserData / survey / checklist CRUD → เรียก services
+│   ├── proxy.ts            # ⭐ 307 ก่อน render เมื่อไม่มี cookie session (สแกน QR ตอนยังไม่ login) — เป็นแค่ optimisation ไม่ใช่การอนุญาตสิทธิ์; Location มาจาก AUTH_URL
 │   │   ├── api/auth/[...nextauth]/route.ts
 │   │   └── globals.css     # Tailwind v4 (@import) + shadcn tokens (@theme) + hgFade + font-sans
 │   ├── components/
@@ -79,15 +82,17 @@ nextjs-digital-hygiene/
 │   │   └── survey.ts       # SurveyQuestion, SurveyQuestionType, SurveyAnswers
 │   ├── services/           # ⭐ server-only business logic (prisma + models)
 │   │   ├── record.service.ts   # listRecords / createRecord / clearAllRecords (+ row→model mapping)
-│   │   ├── user.service.ts     # ⭐ updateUserDivision / acknowledgeRetentionNotice (flag "รับทราบแล้ว" อ่านจาก session callback ไม่ query แยก)
+│   │   ├── user.service.ts     # ⭐ setDivisionOnce (เขียนได้เฉพาะตอนยังไม่มีกอง) / acknowledgeRetentionNotice / deleteAllDataForEmail (ลบข้อมูลรายบุคคล) (flag "รับทราบแล้ว" อ่านจาก session callback ไม่ query แยก)
 │   │   ├── survey.service.ts   # listQuestions (self-seed 5 คำถาม, cache 60 วิ) / create,update,deleteQuestion / createResponse / hasResponded
 │   │   ├── checklist.service.ts # ⭐ listItems (self-seed 26 รายการเริ่มต้น, 4 หมวด, cache 60 วิ) / create,update,deleteItem
-│   │   ├── retention.service.ts # ⭐ runRetentionCleanup — ลบ AssessmentRecord/SurveyResponse เก่ากว่า 30 วัน + VerificationToken หมดอายุ
+│   │   ├── retention.service.ts # ⭐ runRetentionCleanup — ลบ AssessmentRecord/SurveyResponse เก่ากว่า 30 วัน + VerificationToken/Session หมดอายุ + AuditLog เกิน 90 วัน (ไม่ลบ User เอง — ลบตามคำขอผ่าน adminDeleteUserData)
 │   │   └── auth.service.ts     # isAdmin / ADMIN_EMAILS (pure — ห้าม import @/auth)
 │   ├── lib/
 │   │   ├── prisma.ts       # ⭐ PrismaClient singleton + MariaDB adapter (connectTimeout/acquireTimeout ขยายไว้ รองรับ latency ผ่าน Tailscale)
 │   │   ├── format.ts       # scoreFor(percent) — 0-100% safety bands / fmtTime / fmtDate / severityBadge / scorePill (client-safe)
 │   │   ├── cached-loader.ts # ⭐ cache ใน process (TTL + invalidate + กัน race) ของ listItems/listQuestions
+│   │   ├── signin-policy.ts # ⭐ นโยบายอนุญาต login (pure): อีเมล ASCII ล้วน, Google email_verified, gate โดเมน — ทดสอบด้วย node --experimental-strip-types
+│   │   ├── survey-validation.ts # ⭐ ตรวจคำตอบแบบประเมินฝั่งเซิร์ฟเวอร์ (คำถามจริง, คะแนน 1–5, ข้อความ ≤ 1000, ตัดอักขระ XML ผิดกฎ)
 │   │   ├── scoring.ts / storage-draft.ts  # คะแนนต่อหมวด / draft ช่อง GB ข้าม tab (useSyncExternalStore)
 │   │   ├── theme.ts        # GROUP_THEME — ไอคอน+สีต่อหมวด (client-safe presentation helper)
 │   │   ├── utils.ts        # cn() (shadcn)
@@ -198,12 +203,14 @@ OAuth และ Resend magic-link) และโมเดลโดเมนด้
 | `createRecord(input)` | บันทึกผลประเมิน (email/division จาก session); คืน error แบบ typed เช่นกัน | `record.service.createRecord` |
 | `clearRecords()` | ลบทั้งหมด — **admin เท่านั้น** | `record.service.clearAllRecords` |
 | `acknowledgeDataRetentionNotice()` | ⭐ บันทึกว่าผู้ใช้รับทราบ notice การเก็บข้อมูล 30 วันแล้ว | `user.service.acknowledgeRetentionNotice` |
+| `adminResetDivision(email)` | ให้ผู้ใช้เลือกกองใหม่ (กรณีเลือกผิด — ปกติเปลี่ยนไม่ได้) — **admin เท่านั้น**, บันทึก audit; ผลที่บันทึกไปแล้วคงกองเดิม | `user.service.resetDivision` |
+| `adminDeleteUserData(email)` | ลบข้อมูลทั้งหมดของอีเมลนั้นตามคำขอ (บัญชี, session, ผลประเมิน, แบบสอบถาม) และปกปิดชื่อใน audit — **admin เท่านั้น** | `user.service.deleteAllDataForEmail` |
 | `runRetentionCleanupNow()` | ⭐ สั่งรัน sweep ลบข้อมูลเก่าทันที — **admin เท่านั้น** (ปกติรันอัตโนมัติทุกวันผ่าน `instrumentation.ts`) | `retention.service.runRetentionCleanup` |
 | `submitSurveyResponse(answers)` | บันทึกคำตอบแบบสำรวจของผู้ใช้ปัจจุบัน | `survey.service.createResponse` |
 | `adminCreateSurveyQuestion` / `adminUpdateSurveyQuestion` / `adminDeleteSurveyQuestion` | CRUD คำถาม — **admin เท่านั้น** | `survey.service.*` |
 | `adminCreateChecklistItem` / `adminUpdateChecklistItem` / `adminDeleteChecklistItem` | CRUD เช็คลิสต์กิจกรรม (`ChecklistAdmin.tsx`) — **admin เท่านั้น** | `checklist.service.*` |
 
-`(app)/layout.tsx` ดึง `getSession()` ฝั่ง server (flag retention มากับ session: `retentionNoticeSeen`), `[group]/page.tsx` ดึง checklist
+`(app)/layout.tsx` ดึง `getSession()` ฝั่ง server (flag retention มากับ session: `retentionNoticeSeen`), `GroupPage.tsx` ดึง checklist
 items ของหมวดนั้น, `survey/page.tsx` ดึง survey questions + `hasResponded` — ก่อน render ครั้งแรก ไม่มี client
 `useEffect` fetch หรือ dialog กะพริบหลัง hydrate. `createRecord` รับ `groupId`, ตรวจซ้ำฝั่ง server (group
 ต้องมี item, กรอง `selectedIds` ให้อยู่ในหมวด, คำนวณ `gaps` เอง) แล้วคืน `{ok, record, completedGroupIds,
@@ -260,7 +267,7 @@ checklist items เองผ่าน service ตรง ๆ แล้วส่�
   **Guest** (`signIn("resend", {email, redirect:false, callbackUrl})`); `callbackUrl` มาจาก `?callbackUrl=` ที่ผ่าน `safeCallbackPath()`
   (`lib/safe-redirect.ts`: รับเฉพาะ path ภายในไซต์, ไม่รับ `//host`/`\`/อักขระควบคุม/`/login`/`/api`) ค่าเริ่มต้น `/cleanup`; login แล้วเข้า
   `/login` → redirect ไป callback ทันที; `?error=` (จาก Auth.js หรือ `SessionExpired`) แสดงเป็น toast โดย `AuthErrorToast` (ลบเฉพาะ `error` ไม่ลบ `callbackUrl`)
-- **`/cleanup` `/security` `/footprint` `/backup` → `(app)/[group]/page.tsx` → `GroupSection.tsx`** — ยังไม่ login → redirect
+- **`/cleanup` `/security` `/footprint` `/backup` → `(app)/GroupPage.tsx` → `GroupSection.tsx`** — ยังไม่ login → redirect
   `/login?callbackUrl=/<หมวด>` (สแกน QR แล้ว login จะกลับมาที่หมวดนั้น); layout `(app)/layout.tsx` render 1 ใน 2 สถานะ
   (ทุก page เช็คซ้ำเอง เพราะการคลิก tab ฝั่ง client ไม่ re-render layout):
   1. **ล็อกอินแล้วแต่ `division == null`** → `DivisionGuard`/**division gate** (`Select` → `setDivision()` → `router.refresh()`) — ไม่แสดง hero/tabs

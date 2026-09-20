@@ -122,7 +122,9 @@ model SurveyResponse {
   answers   Json
   createdAt DateTime @default(now())
 
-  @@index([email])
+  // One response per address, enforced here (not just by a check-then-insert in the action,
+  // which two concurrent requests from one account could both pass).
+  @@unique([email])
   @@index([createdAt])
 }
 

@@ -16,6 +16,9 @@ export function AppTopBar({ email, admin }: { email?: string; admin?: boolean })
         email
           ? async () => {
               await signOutAction();
+              // A full page load on purpose (not router.push): it drops the client router cache and
+              // any in-memory state of the signed-out user's session.
+              // eslint-disable-next-line @next/next/no-location-assign-relative-destination
               window.location.assign("/");
             }
           : undefined

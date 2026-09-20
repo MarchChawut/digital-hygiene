@@ -124,14 +124,18 @@ export function GroupSection({
     try {
       // The record stores the risks (unchecked items), not the completed ones —
       // same meaning gaps/selectedIds have always had in the DB.
+      // Only which items were left unchecked is sent: the server recomputes the score, the
+      // label and the gap count itself.
       const result = await createRecord({
         groupId,
-        gaps: riskIds.length,
-        scoreLabel: score.label,
         selectedIds: riskIds,
         storageBeforeGb: hasStorage && storageBeforeGb !== "" ? Number(storageBeforeGb) : undefined,
         storageAfterGb: hasStorage && storageAfterGb !== "" ? Number(storageAfterGb) : undefined,
       });
+      if (!result.ok && result.reason === "rate_limited") {
+        toast.error("ส่งผลบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่อีกครั้ง");
+        return;
+      }
       if (!result.ok) {
         // A refresh alone isn't enough — a structurally-broken session won't clear on
         // its own, so force a real sign-out and come back to this same section. The
