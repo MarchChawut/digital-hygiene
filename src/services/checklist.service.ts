@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { createCachedLoader } from "@/lib/cached-loader";
 import { ACTIVITY_GROUPS } from "@/models/activity-group";
 import type { ChecklistItem, ChecklistItemInput } from "@/models/risk";
 
@@ -331,15 +332,22 @@ async function ensureDefaultItems(): Promise<void> {
   seeded = true;
 }
 
-export async function listItems(): Promise<ChecklistItem[]> {
+// Cached (see lib/cached-loader.ts): read on every section page view, changed only by
+// admin edits. The returned array is frozen and shared — treat it as read-only.
+const itemsLoader = createCachedLoader(async () => {
   await ensureDefaultItems();
   const rows = await prisma.checklistItem.findMany({ orderBy: { order: "asc" } });
-  return rows.map(toModel);
+  return Object.freeze(rows.map(toModel)) as readonly ChecklistItem[];
+});
+
+export async function listItems(): Promise<readonly ChecklistItem[]> {
+  return itemsLoader.get();
 }
 
 export async function createItem(input: ChecklistItemInput): Promise<ChecklistItem> {
   assertValidGroupId(input.groupId);
   const row = await prisma.checklistItem.create({ data: input });
+  itemsLoader.invalidate();
   return toModel(row);
 }
 
@@ -349,10 +357,12 @@ export async function updateItem(
 ): Promise<ChecklistItem> {
   assertValidGroupId(input.groupId);
   const row = await prisma.checklistItem.update({ where: { id }, data: input });
+  itemsLoader.invalidate();
   return toModel(row);
 }
 
 export async function deleteItem(id: string): Promise<void> {
   await prisma.checklistItem.delete({ where: { id } });
   seeded = false;
+  itemsLoader.invalidate();
 }

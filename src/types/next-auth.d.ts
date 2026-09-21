@@ -7,6 +7,11 @@ declare module "next-auth" {
       id: string;
       division: string | null;
       isAdmin: boolean;
+      // true once the user has acknowledged the one-time 30-day data-retention notice.
+      retentionNoticeSeen: boolean;
+      // Self-reported storage (GB) answers; null = not answered yet.
+      storageBeforeGb: number | null;
+      storageAfterGb: number | null;
     } & DefaultSession["user"];
   }
 

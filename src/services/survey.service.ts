@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { createCachedLoader } from "@/lib/cached-loader";
 import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers, SurveyResponse } from "@/models/survey";
 
 // Default questions inserted once, the first time the table is empty.
@@ -30,14 +31,21 @@ async function ensureDefaultQuestions(): Promise<void> {
   seeded = true;
 }
 
-export async function listQuestions(): Promise<SurveyQuestion[]> {
+// Cached (see lib/cached-loader.ts): read on every /survey view and on the completing
+// createRecord, changed only by admin edits. The returned array is frozen and shared.
+const questionsLoader = createCachedLoader(async () => {
   await ensureDefaultQuestions();
   const rows = await prisma.surveyQuestion.findMany({ orderBy: { order: "asc" } });
-  return rows.map(toModel);
+  return Object.freeze(rows.map(toModel)) as readonly SurveyQuestion[];
+});
+
+export async function listQuestions(): Promise<readonly SurveyQuestion[]> {
+  return questionsLoader.get();
 }
 
 export async function createQuestion(input: SurveyQuestionInput): Promise<SurveyQuestion> {
   const row = await prisma.surveyQuestion.create({ data: input });
+  questionsLoader.invalidate();
   return toModel(row);
 }
 
@@ -46,16 +54,26 @@ export async function updateQuestion(
   input: Partial<SurveyQuestionInput>
 ): Promise<SurveyQuestion> {
   const row = await prisma.surveyQuestion.update({ where: { id }, data: input });
+  questionsLoader.invalidate();
   return toModel(row);
 }
 
 export async function deleteQuestion(id: string): Promise<void> {
   await prisma.surveyQuestion.delete({ where: { id } });
   seeded = false;
+  questionsLoader.invalidate();
 }
 
-export async function createResponse(email: string, answers: SurveyAnswers): Promise<void> {
-  await prisma.surveyResponse.create({ data: { email, answers } });
+// One response per address — enforced by a unique index, so two concurrent submissions from the
+// same account can't both succeed. Returns false if this address had already responded.
+export async function createResponse(email: string, answers: SurveyAnswers): Promise<boolean> {
+  try {
+    await prisma.surveyResponse.create({ data: { email, answers } });
+    return true;
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2002") return false; // unique violation
+    throw err;
+  }
 }
 
 export async function hasResponded(email: string): Promise<boolean> {
@@ -63,9 +81,12 @@ export async function hasResponded(email: string): Promise<boolean> {
   return count > 0;
 }
 
-// All submitted survey responses, newest first — used by the admin export.
-export async function listResponses(): Promise<SurveyResponse[]> {
-  const rows = await prisma.surveyResponse.findMany({ orderBy: { createdAt: "desc" } });
+// Bounded for the same reason as record.service's ADMIN_MAX_RECORDS.
+export const ADMIN_MAX_RESPONSES = 2000;
+
+// Latest submitted survey responses, newest first — used by the admin dashboard and export.
+export async function listResponses(limit: number = ADMIN_MAX_RESPONSES): Promise<SurveyResponse[]> {
+  const rows = await prisma.surveyResponse.findMany({ orderBy: { createdAt: "desc" }, take: limit });
   return rows.map((r) => ({
     id: r.id,
     email: r.email,

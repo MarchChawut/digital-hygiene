@@ -16,6 +16,9 @@ export interface GroupTheme {
   accentBorder: string;
   chipBg: string;
   chipText: string;
+  // Active state of this group's tab in the section navbar (Tailwind v4 needs the
+  // full class strings here, not fragments built at runtime).
+  tabActive: string;
 }
 
 export const GROUP_THEME: Record<GroupId, GroupTheme> = {
@@ -29,6 +32,7 @@ export const GROUP_THEME: Record<GroupId, GroupTheme> = {
     accentBorder: "border-l-indigo-500",
     chipBg: "bg-indigo-100",
     chipText: "text-indigo-700",
+    tabActive: "border-indigo-500 text-indigo-700",
   },
   security: {
     icon: ShieldAlert,
@@ -40,6 +44,7 @@ export const GROUP_THEME: Record<GroupId, GroupTheme> = {
     accentBorder: "border-l-orange-500",
     chipBg: "bg-orange-100",
     chipText: "text-orange-700",
+    tabActive: "border-orange-500 text-orange-700",
   },
   footprint: {
     icon: Fingerprint,
@@ -51,6 +56,7 @@ export const GROUP_THEME: Record<GroupId, GroupTheme> = {
     accentBorder: "border-l-amber-500",
     chipBg: "bg-amber-100",
     chipText: "text-amber-700",
+    tabActive: "border-amber-500 text-amber-700",
   },
   backup: {
     icon: CloudUpload,
@@ -62,5 +68,6 @@ export const GROUP_THEME: Record<GroupId, GroupTheme> = {
     accentBorder: "border-l-sky-500",
     chipBg: "bg-sky-100",
     chipText: "text-sky-700",
+    tabActive: "border-sky-500 text-sky-700",
   },
 };

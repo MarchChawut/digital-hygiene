@@ -25,7 +25,7 @@ export function DataRetentionNoticeDialog({
   // This is a one-time compliance notice, not a casual dialog — every dismiss
   // path (button, backdrop, Escape) routes through the same acknowledge call
   // so the "seen" flag is always persisted, mirroring the showResult/closeResult
-  // chaining pattern used elsewhere in DigitalHygieneApp.tsx.
+  // chaining pattern used in GroupSection.tsx.
   const acknowledge = async () => {
     if (saving) return;
     setSaving(true);
@@ -46,7 +46,7 @@ export function DataRetentionNoticeDialog({
         <DialogHeader>
           <DialogTitle>การเก็บรักษาข้อมูล</DialogTitle>
           <DialogDescription>
-            ข้อมูลผลการประเมินและแบบสอบถามความพึงพอใจของท่านจะถูกเก็บไว้เป็นเวลา
+            ข้อมูลผลการประเมิน ค่าพื้นที่จัดเก็บที่ท่านกรอก และแบบสอบถามความพึงพอใจของท่านจะถูกเก็บไว้เป็นเวลา
             30 วันนับจากวันที่บันทึก หลังจากนั้นระบบจะลบข้อมูลดังกล่าวโดยอัตโนมัติ
           </DialogDescription>
         </DialogHeader>

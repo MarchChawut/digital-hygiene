@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { TopBar } from "@/components/TopBar";
+import { AppFooter } from "@/components/AppFooter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const metadata: Metadata = {
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
 };
 
 const CONTACT =
-  "กองการศึกษา วิจัย และพัฒนา ศูนย์เทคโนโลยีดิจิทัล โทร 02 281 7999 ต่อ 4058-9 หรือ อีเมล chawut.sa@gmail.com";
+  "กองการศึกษา วิจัย และพัฒนา ศูนย์เทคโนโลยีดิจิทัล หน่วยราชการในพระองค์ โทร 02 281 7999 ต่อ 4058-9 หรือ อีเมล dtc4-trd@royaloffice.th";
 
 export default function DeletionInstructionsPage() {
   return (
@@ -45,6 +46,7 @@ export default function DeletionInstructionsPage() {
           </CardContent>
         </Card>
       </main>
+      <AppFooter />
     </div>
   );
 }

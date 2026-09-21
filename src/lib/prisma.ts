@@ -24,6 +24,9 @@ function createPrismaClient() {
     // it more headroom.
     connectTimeout: 10_000,
     acquireTimeout: 15_000,
+    // Same as the mariadb driver's default, made explicit: the pool is what bursts of
+    // requests (e.g. a room scanning a QR code at once) queue on.
+    connectionLimit: 10,
   });
   return new PrismaClient({ adapter });
 }
