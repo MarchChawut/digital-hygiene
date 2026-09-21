@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ClipboardCheck, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, ClipboardCheck, type LucideIcon } from "lucide-react";
 
 import { ACTIVITY_GROUPS } from "@/models/activity-group";
 import { GROUP_THEME } from "@/lib/theme";
@@ -37,6 +37,8 @@ const TABS: { href: string; label: string; icon: LucideIcon; active: string }[] 
 export function SectionTabs() {
   const pathname = usePathname();
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // Which sides still hide tabs — drives the arrow buttons (shown only where there's more).
+  const [more, setMore] = useState({ left: false, right: false });
 
   // On narrow screens the 5 tabs scroll horizontally — bring the active one to the
   // middle (e.g. after opening /backup from a QR code). Set scrollLeft on the
@@ -51,30 +53,79 @@ export function SectionTabs() {
     });
   }, [pathname]);
 
+  // Track overflow from scroll + size changes. Both are callbacks (the ResizeObserver also
+  // fires once on observe), so the initial state needs no setState in the effect body.
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const update = () => {
+      const left = scroller.scrollLeft > 2;
+      const right = scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 2;
+      setMore((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+    };
+    scroller.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(scroller);
+    Array.from(scroller.children).forEach((child) => observer.observe(child));
+    return () => {
+      scroller.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, []);
+
+  const scrollByPage = (direction: -1 | 1) => {
+    const scroller = scrollerRef.current;
+    scroller?.scrollBy({ left: direction * scroller.clientWidth * 0.6, behavior: "smooth" });
+  };
+
   return (
     <nav
       aria-label="หมวดกิจกรรม"
       className="sticky top-16 z-40 border-y border-slate-200 bg-white"
     >
       <div className="max-w-4xl mx-auto px-4 sm:px-5">
-        <div ref={scrollerRef} className="relative flex overflow-x-auto whitespace-nowrap [scrollbar-width:none]">
-          {TABS.map((tab) => {
-            const active = pathname === tab.href;
-            const Icon = tab.icon;
-            return (
-              <Link
-                key={tab.href}
-                href={tab.href}
-                aria-current={active ? "page" : undefined}
-                className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3.5 text-sm font-semibold transition-colors md:flex-1 md:justify-center ${
-                  active ? tab.active : "border-transparent text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                {tab.label}
-              </Link>
-            );
-          })}
+        <div className="relative">
+          <div ref={scrollerRef} className="relative flex overflow-x-auto whitespace-nowrap [scrollbar-width:none]">
+            {TABS.map((tab) => {
+              const active = pathname === tab.href;
+              const Icon = tab.icon;
+              return (
+                <Link
+                  key={tab.href}
+                  href={tab.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3.5 text-sm font-semibold transition-colors md:flex-1 md:justify-center ${
+                    active ? tab.active : "border-transparent text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {tab.label}
+                </Link>
+              );
+            })}
+          </div>
+          {more.left && (
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label="เลื่อนแท็บไปทางซ้าย"
+              onClick={() => scrollByPage(-1)}
+              className="absolute inset-y-0 left-0 z-10 flex w-10 items-center justify-start bg-linear-to-r from-white via-white/90 to-transparent text-slate-500 hover:text-slate-900"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          )}
+          {more.right && (
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label="เลื่อนแท็บไปทางขวา"
+              onClick={() => scrollByPage(1)}
+              className="absolute inset-y-0 right-0 z-10 flex w-10 items-center justify-end bg-linear-to-l from-white via-white/90 to-transparent text-slate-500 hover:text-slate-900"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
     </nav>
