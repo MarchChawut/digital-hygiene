@@ -14,8 +14,9 @@ export interface AssessmentRecord {
   gaps: number;
   scoreLabel: string;
   selectedIds: string[];
-  // Optional self-reported device storage USED (GB, not free/available) before/
-  // after the Digital Cleanup checklist. Null when not supplied. A successful
+  // Self-reported device storage USED (GB, not free/available) before/after the activities.
+  // Legacy records carry their own values; for newer ones the admin list fills them in from the
+  // user's answers (see record.service.listRecords). Null when not supplied. A successful
   // cleanup should reduce used space, so "freed" = storageBeforeGb - storageAfterGb.
   storageBeforeGb: number | null;
   storageAfterGb: number | null;
@@ -27,8 +28,6 @@ export interface AssessmentRecord {
 export interface CreateRecordInput {
   groupId: GroupId;
   selectedIds: string[];
-  storageBeforeGb?: number;
-  storageAfterGb?: number;
 }
 
 // Result of submitting one section. `completedGroupIds` are the sections this user

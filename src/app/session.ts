@@ -20,6 +20,8 @@ export const getSession = cache(async (): Promise<{ userId: string; user: Sessio
       division: session.user.division ?? null,
       isAdmin: session.user.isAdmin ?? false,
       retentionNoticeSeen: session.user.retentionNoticeSeen ?? false,
+      storageBeforeGb: session.user.storageBeforeGb ?? null,
+      storageAfterGb: session.user.storageAfterGb ?? null,
     },
   };
 });

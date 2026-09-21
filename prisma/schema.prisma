@@ -27,6 +27,14 @@ model User {
   division      String?
   // Set once the user dismisses the one-time 30-day data-retention notice.
   retentionNoticeAcknowledgedAt DateTime?
+  // Self-reported device storage USED (GB, not free/available), asked in two pop-ups: before the
+  // activities (right after the division is chosen) and after all sections are done (on /survey).
+  // Each is written once (see user.service); freed = before - after. Each has its own timestamp so
+  // the 30-day retention sweep ages them separately ("30 days from when it was recorded").
+  storageBeforeGb Float?
+  storageBeforeAt DateTime?
+  storageAfterGb  Float?
+  storageAfterAt  DateTime?
   accounts      Account[]
   sessions      Session[]
 }
@@ -60,6 +68,8 @@ model Session {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  // The daily sweep deletes expired sessions by this column.
+  @@index([expires])
 }
 
 model VerificationToken {

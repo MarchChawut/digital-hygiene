@@ -19,7 +19,7 @@ export function AppHero({ division }: { division: string }) {
             ล้างเครื่องให้ใส <br/><span className="text-sky-300">ใส่ใจภูมิคุ้มกันดิจิทัล</span>
           </h1>
           <p className="text-blue-100 max-w-2xl mx-auto text-base sm:text-lg leading-relaxed">
-            วิเคราะห์ช่องโหว่และความเสี่ยงทางไซเบอร์ <br/> ผ่านกิจกรรมโครงการ Digital Hygiene & Safety First
+            วิเคราะห์ช่องโหว่และความเสี่ยงทางไซเบอร์ <br/> ผ่านกิจกรรม Digital Hygiene & Safety First
           </p>
           <p className="text-sm font-semibold tracking-wider uppercase bg-gradient-to-r from-amber-400 via-orange-400 to-yellow-300 bg-clip-text text-transparent mt-3">กอง/หน่วยงาน: {division}</p>
         </div>

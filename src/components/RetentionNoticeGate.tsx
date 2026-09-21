@@ -14,7 +14,21 @@ const DataRetentionNoticeDialog = dynamic(
 // One-time data-retention notice, shown right after sign-in. `initial` is seeded
 // server-side (from a DB column, not localStorage), so there's no post-hydration
 // round trip or dialog flash.
-export function RetentionNoticeGate({ initial }: { initial: boolean }) {
+export function RetentionNoticeGate({
+  initial,
+  onAcknowledged,
+}: {
+  initial: boolean;
+  onAcknowledged?: () => void;
+}) {
   const [open, setOpen] = useState(initial);
-  return <DataRetentionNoticeDialog open={open} onAcknowledged={() => setOpen(false)} />;
+  return (
+    <DataRetentionNoticeDialog
+      open={open}
+      onAcknowledged={() => {
+        setOpen(false);
+        onAcknowledged?.();
+      }}
+    />
+  );
 }

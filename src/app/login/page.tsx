@@ -5,6 +5,7 @@ import { safeCallbackPath } from "@/lib/safe-redirect";
 import { AppTopBar } from "@/components/AppTopBar";
 import { AuthErrorToast } from "@/components/AuthErrorToast";
 import { SignInGate } from "@/components/SignInGate";
+import { AppFooter } from "@/components/AppFooter";
 
 // The one place a signed-out visitor sees the sign-in card. Every section page (and "/")
 // redirects here with ?callbackUrl=<where they were going>, so scanning a section's QR
@@ -22,12 +23,13 @@ export default async function LoginPage({
   if (session) redirect(target);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
       <AppTopBar />
       <Suspense fallback={null}>
         <AuthErrorToast />
       </Suspense>
       <SignInGate callbackUrl={target} />
+      <AppFooter />
     </div>
   );
 }

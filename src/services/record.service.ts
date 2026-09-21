@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { isGroupId, type GroupId } from "@/models/activity-group";
 import type { AssessmentRecord } from "@/models/assessment";
+import { isValidGb } from "@/lib/storage-gb";
 
 // DB row (createdAt/JSON) -> client-facing model (ts number / string[]).
 function toModel(row: {
@@ -26,8 +27,10 @@ function toModel(row: {
     gaps: row.gaps,
     scoreLabel: row.scoreLabel,
     selectedIds: Array.isArray(row.selectedIds) ? (row.selectedIds as string[]) : [],
-    storageBeforeGb: row.storageBeforeGb,
-    storageAfterGb: row.storageAfterGb,
+    // Rows written before the cap existed may hold absurd numbers (1e308 once got stored); the
+    // admin sums/averages these, so anything out of range is shown as "not supplied".
+    storageBeforeGb: isValidGb(row.storageBeforeGb) ? row.storageBeforeGb : null,
+    storageAfterGb: isValidGb(row.storageAfterGb) ? row.storageAfterGb : null,
   };
 }
 
@@ -36,10 +39,34 @@ function toModel(row: {
 // able to make /admin arbitrarily large).
 export const ADMIN_MAX_RECORDS = 5000;
 
-// Latest submissions, newest first.
+// Latest submissions, newest first. The storage (GB) answers now live on the User row (asked in
+// pop-ups, not per submission), so each address's LATEST Cleanup record gets them filled in — one
+// row per person keeps the admin's averages per person. The pair is applied only to a record that
+// has neither value of its own (mixing a legacy "before" with a newer "after" measures nothing).
+// The users are fetched alongside, by "has an answer" (a small set), not by an IN list of up to
+// ADMIN_MAX_RECORDS addresses after the records arrive.
 export async function listRecords(limit: number = ADMIN_MAX_RECORDS): Promise<AssessmentRecord[]> {
-  const rows = await prisma.assessmentRecord.findMany({ orderBy: { createdAt: "desc" }, take: limit });
-  return rows.map(toModel);
+  const [rows, users] = await Promise.all([
+    prisma.assessmentRecord.findMany({ orderBy: { createdAt: "desc" }, take: limit }),
+    prisma.user.findMany({
+      where: { OR: [{ storageBeforeGb: { not: null } }, { storageAfterGb: { not: null } }] },
+      select: { email: true, storageBeforeGb: true, storageAfterGb: true },
+    }),
+  ]);
+  const records = rows.map(toModel);
+  const byEmail = new Map(users.map((u) => [u.email, u]));
+  const filled = new Set<string>();
+  return records.map((r) => {
+    if (r.groupId !== "cleanup" || filled.has(r.email)) return r;
+    filled.add(r.email); // newest first, so this is the latest Cleanup record of that address
+    const u = byEmail.get(r.email);
+    if (!u || r.storageBeforeGb !== null || r.storageAfterGb !== null) return r;
+    return {
+      ...r,
+      storageBeforeGb: isValidGb(u.storageBeforeGb) ? u.storageBeforeGb : null,
+      storageAfterGb: isValidGb(u.storageAfterGb) ? u.storageAfterGb : null,
+    };
+  });
 }
 
 // How many submissions this address made since `since` — used to throttle createRecord.
@@ -55,8 +82,6 @@ export async function createRecord(data: {
   gaps: number;
   scoreLabel: string;
   selectedIds: string[];
-  storageBeforeGb?: number;
-  storageAfterGb?: number;
 }): Promise<AssessmentRecord> {
   const row = await prisma.assessmentRecord.create({ data });
   return toModel(row);

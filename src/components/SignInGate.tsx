@@ -117,7 +117,7 @@ export function SignInGate({ callbackUrl }: { callbackUrl: string }) {
         </CardContent>
       </Card>
       <p className="mt-4 text-center text-xs text-slate-400">
-        <Link href="/privacy" className="underline hover:text-slate-600">
+        <Link href="/privacy" prefetch={false} className="underline hover:text-slate-600">
           นโยบายความเป็นส่วนตัว
         </Link>
       </p>

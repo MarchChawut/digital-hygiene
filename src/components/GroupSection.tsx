@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useSyncExternalStore } from "react";
+import React, { useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Sparkles, PartyPopper, ClipboardList, CheckCircle2, BookOpen } from "lucide-react";
@@ -12,16 +12,9 @@ import { GROUP_THEME } from "@/lib/theme";
 import { scoreFor, severityBadge } from "@/lib/format";
 import { groupByCategory, scoreSection } from "@/lib/scoring";
 import { loginPath } from "@/lib/safe-redirect";
-import {
-  getStorageDraftSnapshot,
-  parseStorageDraft,
-  setStorageDraft,
-  subscribeStorageDraft,
-} from "@/lib/storage-draft";
 
 import { SurveyNudgeDialog } from "@/components/SurveyNudgeDialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
@@ -33,11 +26,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 export function GroupSection({
   groupId,
   items,
-  userEmail,
 }: {
   groupId: GroupId;
   items: ChecklistItem[]; // this group's items only
-  userEmail: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -49,34 +40,6 @@ export function GroupSection({
   // "เปิดคู่มือ" step-by-step guide. The header checkbox is a derived master checkbox:
   // indeterminate when only some categories are checked; clicking it bulk-toggles them.
   const [checked, setChecked] = useState<Record<string, boolean>>({});
-
-  // Optional self-reported device storage USED (GB, not free/available) before/after the
-  // Digital Cleanup checklist — kept as raw input strings so a partial/empty field doesn't
-  // force a NaN; parsed to numbers only when submitting. A successful cleanup should reduce
-  // used space, so "freed" is before − after (positive = good). The user does the "before,
-  // clean the device, after" steps across tabs, so the draft lives in an external store
-  // (see lib/storage-draft.ts) and survives navigation. The server snapshot is empty, so
-  // hydration matches and the stored value appears right after.
-  const hasStorage = groupId === "cleanup";
-  const draftRaw = useSyncExternalStore(
-    subscribeStorageDraft,
-    () => getStorageDraftSnapshot(userEmail),
-    () => ""
-  );
-  const { before: storageBeforeGb, after: storageAfterGb } = useMemo(
-    () => parseStorageDraft(draftRaw),
-    [draftRaw]
-  );
-  const updateStorage = (before: string, after: string) =>
-    setStorageDraft(userEmail, { before, after });
-  const storageFreedGb = useMemo(() => {
-    const before = Number(storageBeforeGb);
-    const after = Number(storageAfterGb);
-    if (storageBeforeGb === "" || storageAfterGb === "" || !Number.isFinite(before) || !Number.isFinite(after)) {
-      return null;
-    }
-    return before - after;
-  }, [storageBeforeGb, storageAfterGb]);
 
   const [guideItem, setGuideItem] = useState<ChecklistItem | null>(null);
   const [showResult, setShowResult] = useState(false);
@@ -129,8 +92,6 @@ export function GroupSection({
       const result = await createRecord({
         groupId,
         selectedIds: riskIds,
-        storageBeforeGb: hasStorage && storageBeforeGb !== "" ? Number(storageBeforeGb) : undefined,
-        storageAfterGb: hasStorage && storageAfterGb !== "" ? Number(storageAfterGb) : undefined,
       });
       if (!result.ok && result.reason === "rate_limited") {
         toast.error("ส่งผลบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่อีกครั้ง");
@@ -190,52 +151,6 @@ export function GroupSection({
                 {done && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
               </h3>
             </label>
-
-            {hasStorage && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                <label className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                  ก่อนเริ่มกิจกรรม (พื้นที่ที่ใช้ไป) :
-                  <Input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.1"
-                    placeholder="0"
-                    value={storageBeforeGb}
-                    onChange={(e) => updateStorage(e.target.value, storageAfterGb)}
-                    className="w-24"
-                  />
-                  GB
-                </label>
-                <label className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                  หลังกิจกรรม (พื้นที่ที่ใช้ไป) :
-                  <Input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.1"
-                    placeholder="0"
-                    value={storageAfterGb}
-                    onChange={(e) => updateStorage(storageBeforeGb, e.target.value)}
-                    className="w-24"
-                  />
-                  GB
-                </label>
-                {/* Always rendered (min-h reserves the line): the draft is restored right
-                    after hydration, and a line appearing then would shift the accordion down. */}
-                <p
-                  className={`sm:col-span-2 min-h-4 text-xs font-bold ${
-                    storageFreedGb !== null && storageFreedGb < 0 ? "text-amber-600" : "text-emerald-600"
-                  }`}
-                >
-                  {storageFreedGb === null
-                    ? null
-                    : storageFreedGb >= 0
-                      ? `พื้นที่ว่างเพิ่มขึ้น ${storageFreedGb.toFixed(1)} GB`
-                      : `พื้นที่ว่างลดลง ${Math.abs(storageFreedGb).toFixed(1)} GB`}
-                </p>
-              </div>
-            )}
 
             {categories.length ? (
               <Accordion multiple defaultValue={[]}>
@@ -325,12 +240,6 @@ export function GroupSection({
                     <span className="font-bold text-slate-900">{categories.length - doneCount}</span> จาก{" "}
                     {categories.length} หมวดย่อย
                   </div>
-                  {hasStorage && storageFreedGb !== null && (
-                    <div>
-                      {storageFreedGb >= 0 ? "พื้นที่จัดเก็บที่ลดได้" : "พื้นที่ที่ใช้เพิ่มขึ้น"}{" "}
-                      <span className="font-bold text-slate-900">{Math.abs(storageFreedGb).toFixed(1)}</span> GB
-                    </div>
-                  )}
                 </div>
               </div>
             </DialogHeader>

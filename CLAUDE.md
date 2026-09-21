@@ -39,6 +39,12 @@ contrast with errors where `active`/`idle` is nonzero, which point at query/auth
 Tailscale is unavailable, fall back to the local Docker MariaDB container documented above instead of
 waiting it out.
 
+**Restart `pnpm dev` after `prisma generate` / `prisma migrate` (any schema change).** `src/lib/prisma.ts` keeps the
+client on `globalThis` so hot-reloads don't leak connections, which means a running dev server keeps the OLD generated
+client: code using a new column then fails with `PrismaClientValidationError … Unknown argument \`<column>\``
+(e.g. the storage pop-up's "ไม่สามารถบันทึกได้" toast) even though the DB has the column. The real error is in the
+terminal / `.next/dev/logs/next-development.log`.
+
 Never put the production `DATABASE_URL` (or any other prod secret) in the local `.env`, even
 commented out — an accidental uncomment would make `pnpm dev` read/write the live prod DB. For a
 one-off check against prod, pass it inline on the command instead, e.g. `DATABASE_URL="..." pnpm exec
@@ -94,7 +100,10 @@ Wiring: `src/auth.config.ts` (edge-safe: Google provider + optional domain gate)
 - `src/app/(app)/` — route group for the 5 tabs, sharing `layout.tsx`: TopBar, and — once signed in with
   a division — `AppHero` + `SectionTabs` (a `next/link` navbar, sticky under the TopBar). Signed in without a
   division → only `DivisionGuard` (lazy `DivisionGate`). Signed out → the layout renders just `children`
-  (no shell), and each page redirects to `/login`.
+  (no shell), and each page redirects to `/login`. Every page shows `TopBar` (DTC logo `public/DTC-Logo.png` +
+  divider + wordmark; **keep it `h-16`** — `SectionTabs` sticks at `top-16`) and the shared `AppFooter` (organisation
+  name, pinned to the viewport bottom via `mt-auto` in a `min-h-screen flex flex-col` page; `clearBottomNav` leaves
+  room for the admin's mobile bottom bar).
   - `/cleanup`, `/security`, `/footprint`, `/backup` — four explicit route folders under `(app)/`, each a
     one-line page rendering the shared `GroupPage` (`(app)/GroupPage.tsx` → `GroupSection` with that
     group's items). **Not a dynamic `[group]` segment**: that also matched `/favicon.ico`, `/robots.txt`,
@@ -131,15 +140,29 @@ redirect, the `/admin` nav link visibility, and admin-only actions (`clearRecord
 **Sections are independent.** Checklist items come from the DB (`checklist.service.listItems()`, admin-editable;
 each carries a `groupId` — see `src/models/activity-group.ts` for the 4 groups, colors/icons in
 `src/lib/theme.ts`). `GroupSection.tsx` owns one group's state: category checkboxes (master checkbox
-with indeterminate state + per-category accordion), the Digital Cleanup before/after storage (GB) inputs
-(kept across tabs in `src/lib/storage-draft.ts`), the analyze button (never gated) and the result
+with indeterminate state + per-category accordion), the analyze button (never gated) and the result
 `Dialog`. Scoring is per section (`src/lib/scoring.ts`: 100% = every category in that group checked).
 Each analyze calls `createRecord({groupId, …})` → **one `AssessmentRecord` per submit**, with
 `groupId` (NULL = a legacy record from before the split, which scored all groups together).
 `createRecord` trusts nothing but the section id and WHICH items were left unchecked: it re-validates
 `groupId`, drops ids outside the group, and **recomputes the score, `scoreLabel` and `gaps` itself**
-(`lib/scoring.ts` + `scoreFor`), clamps GB (0–100 000, Cleanup only) and throttles to 30 submits/hour/address
-(`{ok:false, reason:"rate_limited"}`).
+(`lib/scoring.ts` + `scoreFor`) and throttles to 30 submits/hour/address (`{ok:false, reason:"rate_limited"}`).
+
+**Storage (GB) is asked in two pop-ups, not in a section.** Self-reported device storage USED, kept on the
+`User` row (`storageBeforeGb/At`, `storageAfterGb/At`; the session callback carries the two values, so no extra
+query). (1) **"Before"** — `StorageBeforeDialog`, mounted by `(app)/EntryDialogs.tsx` in the layout while the user has
+a division and has answered neither question: right after the division gate for a new user, on the next visit for
+an existing one; after the one-time retention notice (never stacked on it) and never on `/survey`. (2) **"After"** —
+`StorageAfterDialog` on `/survey`, only when every section with items has been submitted (`lib/completion.ts`,
+re-checked on the server) and no answer yet; it then shows before → after → difference before the survey. Both have
+"ไว้ทีหลัง" (hides until reload / the next `/survey` visit — nothing is stored). Both actions (`saveStorageBefore/After`)
+refuse bad numbers (`lib/storage-gb.ts`: 0 – `MAX_GB` = 16 384 — a higher cap let ONE Guest account skew the admin's
+average) and **write once** (`user.service.setStorage*Once`, race-safe like `setDivisionOnce`); "before" is also refused
+once "after" exists (`too_late`, so neither value is chosen after seeing the other), and a refused/duplicate write is
+reported (`already_set`), never as `ok`. A wrong entry is fixed by the admin's erasure tool. The 30-day retention sweep
+ages each answer from its own timestamp; `record.service.listRecords` fills the pair into each address's latest Cleanup
+record for `/admin` only when that record has no value of its own, and out-of-range legacy values are shown as "not
+supplied" (the old per-record `AssessmentRecord.storage*Gb` columns are legacy and no longer written).
 
 **Satisfaction survey:** `SurveyQuestion` rows are admin-editable (`SurveyAdmin.tsx`, mounted in
 `AdminDashboard.tsx`) with a `type` of `"rating"` (1-5) or `"text"`. `survey.service.listQuestions()`
@@ -221,8 +244,15 @@ For a full domain-model + setup reference, see `CODEBASE-MAP.md`.
     `window.location.assign`. A mid-section session expiry returns to the same tab with `?error=SessionExpired`
     (shown by `AuthErrorToast`, since a toast raised before the reload would be wiped). Auth.js logs its own
     `[auth][error] SignOutError` in that case (the DB session row is already gone) — harmless.
+- **Capacity (measured on a Mac, production build, 200 simulated users doing the whole journey — page loads, both
+  storage answers, 4 section submits, survey — with sessions pre-seeded; NOT Google/Resend sign-in):** 0 errors in
+  every scenario. DB on the same host (how production runs): everything ≤ 13 ms p95 when arrivals are spread over a
+  minute, first page ≈ 0.4–0.8 s p95 when all 200 hit at once; ≈ 3 ms CPU per request (single Node process, ~560 MB RSS).
+  DB ~60 ms away (dev over Tailscale): ≈ 1–3 s per request when spread over a minute, 3–10 s p95 when all at once — the
+  pool (`connectionLimit: 10`) × round-trip time is the limit, so keep the DB on the app's host. The retention sweep runs its
+  statements one after another for the same reason (it also runs at every start).
 - **`react-hooks/set-state-in-effect` is enforced** — don't `setState` in an effect to load client-only
-  data; use `useSyncExternalStore` (see `storage-draft.ts`).
+  data; use `useSyncExternalStore` (or derive it from props).
 - **`Dialog`/`AlertDialog` content never appears in raw SSR HTML (curl)**, even with `open` forced true —
   both Radix (`Dialog`) and Base UI (`AlertDialog`) portal their popups client-side after hydration, so
   they only render in a real browser. To verify modal content, use **headless Chrome**

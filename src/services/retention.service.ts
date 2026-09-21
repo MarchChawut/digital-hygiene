@@ -31,21 +31,35 @@ export async function runRetentionCleanup(
   expiredTokens: number;
   expiredSessions: number;
   auditLogs: number;
+  storageCleared: number;
 }> {
-  const [records, surveyResponses, expiredTokens, expiredSessions, auditLogs] = await Promise.all([
-    prisma.assessmentRecord.deleteMany({ where: { createdAt: { lt: cutoff } } }),
-    prisma.surveyResponse.deleteMany({ where: { createdAt: { lt: cutoff } } }),
-    prisma.verificationToken.deleteMany({ where: { expires: { lt: new Date() } } }),
-    // Auth.js only removes an expired session when that exact token is presented again, so
-    // abandoned ones (every phone that scanned a QR code once) would otherwise pile up.
-    prisma.session.deleteMany({ where: { expires: { lt: new Date() } } }),
-    prisma.auditLog.deleteMany({ where: { createdAt: { lt: auditCutoff } } }),
-  ]);
+  // One statement at a time: this also runs at every server start, and six in parallel would take
+  // six of the pool's ten connections just when a room full of phones may be arriving.
+  const records = await prisma.assessmentRecord.deleteMany({ where: { createdAt: { lt: cutoff } } });
+  const surveyResponses = await prisma.surveyResponse.deleteMany({ where: { createdAt: { lt: cutoff } } });
+  const expiredTokens = await prisma.verificationToken.deleteMany({ where: { expires: { lt: new Date() } } });
+  // Auth.js only removes an expired session when that exact token is presented again, so
+  // abandoned ones (every phone that scanned a QR code once) would otherwise pile up.
+  const expiredSessions = await prisma.session.deleteMany({ where: { expires: { lt: new Date() } } });
+  const auditLogs = await prisma.auditLog.deleteMany({ where: { createdAt: { lt: auditCutoff } } });
+  // The self-reported storage (GB) answers live on the User row, which is kept; each ages out 30
+  // days after ITS OWN timestamp, like the assessment data it belongs to, and the user is then
+  // asked afresh (an answered "after" with a cleared "before" is not re-asked: see the layout).
+  const clearedBefore = await prisma.user.updateMany({
+    where: { storageBeforeAt: { lt: cutoff } },
+    data: { storageBeforeGb: null, storageBeforeAt: null },
+  });
+  const clearedAfter = await prisma.user.updateMany({
+    where: { storageAfterAt: { lt: cutoff } },
+    data: { storageAfterGb: null, storageAfterAt: null },
+  });
+  const storageCleared = { count: clearedBefore.count + clearedAfter.count };
   return {
     records: records.count,
     surveyResponses: surveyResponses.count,
     expiredTokens: expiredTokens.count,
     expiredSessions: expiredSessions.count,
     auditLogs: auditLogs.count,
+    storageCleared: storageCleared.count,
   };
 }

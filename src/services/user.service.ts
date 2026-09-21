@@ -22,6 +22,43 @@ export async function setDivisionOnce(
   return current?.division === division ? "unchanged" : "already_set";
 }
 
+// The two self-reported storage answers. Each is written only while still empty (a conditional
+// UPDATE, race-safe like setDivisionOnce), and "before" only while "after" is still empty too — so
+// neither can be picked after seeing the other. A wrong entry is fixed by the admin's erasure
+// tool. Each answer carries its own timestamp for the 30-day retention sweep.
+export async function setStorageBeforeOnce(
+  userId: string,
+  gb: number
+): Promise<"set" | "already_set" | "too_late"> {
+  const res = await prisma.user.updateMany({
+    where: { id: userId, storageBeforeGb: null, storageAfterGb: null },
+    data: { storageBeforeGb: gb, storageBeforeAt: new Date() },
+  });
+  if (res.count > 0) return "set";
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { storageBeforeGb: true },
+  });
+  return row?.storageBeforeGb != null ? "already_set" : "too_late";
+}
+
+// `saved` = this call wrote the value; false means an earlier answer was kept. `after` is null only
+// if the account vanished (erasure) between the write and the read.
+export async function setStorageAfterOnce(
+  userId: string,
+  gb: number
+): Promise<{ saved: boolean; before: number | null; after: number | null }> {
+  const res = await prisma.user.updateMany({
+    where: { id: userId, storageAfterGb: null },
+    data: { storageAfterGb: gb, storageAfterAt: new Date() },
+  });
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { storageBeforeGb: true, storageAfterGb: true },
+  });
+  return { saved: res.count > 0, before: row?.storageBeforeGb ?? null, after: row?.storageAfterGb ?? null };
+}
+
 export async function acknowledgeRetentionNotice(userId: string): Promise<void> {
   await prisma.user.update({
     where: { id: userId },

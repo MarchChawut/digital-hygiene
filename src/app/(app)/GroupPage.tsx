@@ -22,5 +22,5 @@ export async function GroupPage({ group }: { group: GroupId }) {
   if (!session.user.division) return <DivisionGuard user={session.user} />;
 
   const items = (await listItems()).filter((i) => i.groupId === group);
-  return <GroupSection key={group} groupId={group} items={items} userEmail={session.user.email} />;
+  return <GroupSection key={group} groupId={group} items={items} />;
 }

@@ -13,11 +13,14 @@ import * as auditService from "@/services/audit.service";
 import { createLogger } from "@/lib/logger";
 import { groupByCategory, scoreSection } from "@/lib/scoring";
 import { scoreFor } from "@/lib/format";
+import { allSectionsDone, requiredGroupIds } from "@/lib/completion";
+import { isValidGb } from "@/lib/storage-gb";
 import { validateSurveyAnswers } from "@/lib/survey-validation";
 import { isSafeAsciiEmail } from "@/lib/signin-policy";
 import { DIVISIONS } from "@/models/division";
 import { GROUP_IDS, isGroupId } from "@/models/activity-group";
 import type { CreateRecordInput, CreateRecordResult } from "@/models/assessment";
+import type { SaveStorageAfterResult, SaveStorageBeforeResult } from "@/models/storage";
 import type { SurveyQuestion, SurveyQuestionInput, SurveyAnswers } from "@/models/survey";
 import type { ChecklistItem, ChecklistItemInput } from "@/models/risk";
 
@@ -97,7 +100,6 @@ export async function setDivision(
 // Most submissions one address may make per hour (across all sections, re-submits included) —
 // generous for real use, but stops one account flooding the table (and /admin) in a loop.
 const RECORDS_PER_HOUR_LIMIT = 30;
-const MAX_GB = 100_000;
 
 // Save one section's submission. email + division come from the session, not the client. The
 // client only reports WHICH ITEMS it left unchecked; the section, the valid items, the score,
@@ -135,8 +137,6 @@ export async function createRecord(input: CreateRecordInput): Promise<CreateReco
     categories.map((c) => [c.category, !c.items.some((i) => reported.has(i.id))])
   );
   const { percent, riskIds: selectedIds } = scoreSection(categories, checked);
-  // Storage GB belongs to the Digital Cleanup section only.
-  const isCleanup = input.groupId === "cleanup";
 
   const record = await recordService.createRecord({
     email: user.email,
@@ -145,8 +145,6 @@ export async function createRecord(input: CreateRecordInput): Promise<CreateReco
     gaps: selectedIds.length,
     scoreLabel: scoreFor(percent).label,
     selectedIds,
-    storageBeforeGb: isCleanup ? sanitizeGb(input.storageBeforeGb) : undefined,
-    storageAfterGb: isCleanup ? sanitizeGb(input.storageAfterGb) : undefined,
   });
   log.info("assessment.submitted", {
     recordId: record.id,
@@ -159,10 +157,9 @@ export async function createRecord(input: CreateRecordInput): Promise<CreateReco
     (g) => g === input.groupId || completedBefore.includes(g)
   );
   // A section only counts as required if it has items (an admin may empty one out).
-  const requiredGroupIds = GROUP_IDS.filter((g) => items.some((i) => i.groupId === g));
   const justCompletedAll =
     !completedBefore.includes(input.groupId) &&
-    requiredGroupIds.every((g) => completedGroupIds.includes(g));
+    requiredGroupIds(items).every((g) => completedGroupIds.includes(g));
   const surveyNudge =
     justCompletedAll &&
     !(await surveyService.hasResponded(user.email)) &&
@@ -171,11 +168,42 @@ export async function createRecord(input: CreateRecordInput): Promise<CreateReco
   return { ok: true, record, completedGroupIds, surveyNudge };
 }
 
-// Optional, self-reported GB values from the client — not required to submit, so bad input
-// (negative, non-finite, or absurdly large — 1e308 used to be stored and wrecked the admin's
-// averages) is dropped rather than rejected outright.
-function sanitizeGb(n?: number): number | undefined {
-  return typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= MAX_GB ? n : undefined;
+// The two self-reported storage (GB) pop-ups. Bad input (negative, non-finite, above MAX_GB) is
+// refused — unlike the old optional field it is the whole point of the request. Each value is
+// written once, "before" only while "after" is still empty (see user.service), and the result says
+// truthfully when nothing was written. "after" is only accepted once every section has been
+// submitted, checked here — the client never decides that.
+export async function saveStorageBefore(gb: number): Promise<SaveStorageBeforeResult> {
+  let user;
+  try {
+    user = await requireUser();
+  } catch {
+    return { ok: false, reason: "unauthenticated" };
+  }
+  if (!user.division) return { ok: false, reason: "no_division" };
+  if (!isValidGb(gb)) return { ok: false, reason: "invalid" };
+  const outcome = await userService.setStorageBeforeOnce(user.id, gb === 0 ? 0 : gb); // JSON can carry -0
+  return outcome === "set" ? { ok: true } : { ok: false, reason: outcome };
+}
+
+export async function saveStorageAfter(gb: number): Promise<SaveStorageAfterResult> {
+  let user;
+  try {
+    user = await requireUser();
+  } catch {
+    return { ok: false, reason: "unauthenticated" };
+  }
+  if (!user.division) return { ok: false, reason: "no_division" };
+  if (!isValidGb(gb)) return { ok: false, reason: "invalid" };
+  const [items, completed] = await Promise.all([
+    checklistService.listItems(),
+    recordService.listCompletedGroupIds(user.email),
+  ]);
+  if (!allSectionsDone(items, completed)) return { ok: false, reason: "not_finished" };
+  const stored = await userService.setStorageAfterOnce(user.id, gb === 0 ? 0 : gb);
+  // Never echo the client's number as if it were stored: if the row is gone, say so.
+  if (stored.after === null) return { ok: false, reason: "gone" };
+  return { ok: true, before: stored.before, after: stored.after, saved: stored.saved };
 }
 
 // Delete every submission — admin only.
@@ -245,6 +273,7 @@ export async function runRetentionCleanupNow(): Promise<{
   expiredTokens: number;
   expiredSessions: number;
   auditLogs: number;
+  storageCleared: number;
 }> {
   const user = await requireAdmin("retention.manual_sweep");
   const result = await retentionService.runRetentionCleanup();

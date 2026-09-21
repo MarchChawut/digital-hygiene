@@ -78,6 +78,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // Same DB row, so the (app) layout needs no extra query for the one-time notice.
           retentionNoticeSeen:
             (user as { retentionNoticeAcknowledgedAt?: Date | null }).retentionNoticeAcknowledgedAt != null,
+          // Also from the same row (no extra query): drive the two storage pop-ups.
+          storageBeforeGb: (user as { storageBeforeGb?: number | null }).storageBeforeGb ?? null,
+          storageAfterGb: (user as { storageAfterGb?: number | null }).storageAfterGb ?? null,
           isAdmin: isAdmin(user.email),
         },
       } as typeof session;

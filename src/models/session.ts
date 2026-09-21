@@ -9,4 +9,7 @@ export interface SessionUser {
   isAdmin: boolean;
   // Whether the one-time data-retention notice has been acknowledged.
   retentionNoticeSeen: boolean;
+  // The self-reported storage (GB) answers; null = not answered yet (drives the two pop-ups).
+  storageBeforeGb: number | null;
+  storageAfterGb: number | null;
 }

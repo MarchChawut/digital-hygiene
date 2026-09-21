@@ -60,7 +60,7 @@ nextjs-digital-hygiene/
 │   │   ├── api/auth/[...nextauth]/route.ts
 │   │   └── globals.css     # Tailwind v4 (@import) + shadcn tokens (@theme) + hgFade + font-sans
 │   ├── components/
-│   │   ├── GroupSection.tsx       # ⭐ 1 หมวด = 1 tab ("use client"): checklist + GB (cleanup) + ปุ่มวิเคราะห์ + result dialog + nudge — คะแนน/บันทึกแยกอิสระต่อหมวด
+│   │   ├── GroupSection.tsx       # ⭐ 1 หมวด = 1 tab ("use client"): checklist + ปุ่มวิเคราะห์ + result dialog + nudge — คะแนน/บันทึกแยกอิสระต่อหมวด
 │   │   ├── SectionTabs.tsx        # ⭐ navbar 5 tab (next/link, sticky top-16 ใต้ TopBar, เลื่อนแนวนอนบนมือถือ)
 │   │   ├── AppTopBar.tsx / AppHero.tsx  # TopBar (client wrapper ของ signOutAction + ลิงก์ admin) / hero ที่แสดงกอง
 │   │   ├── SignInGate.tsx / DivisionGate.tsx  # Google/Guest sign-in (callbackUrl มาจาก /login ผ่าน safeCallbackPath) / เลือกกอง
@@ -71,7 +71,7 @@ nextjs-digital-hygiene/
 │   │   ├── SurveyForm.tsx / SurveyPanel.tsx  # ฟอร์มแบบสำรวจ + เนื้อหาหน้า /survey (ขอบคุณ/ไม่มีคำถาม)
 │   │   ├── SurveyNudgeDialog.tsx  # popup ชวนทำแบบประเมิน — เด้งครั้งเดียวตอนทำครบทุกหมวด
 │   │   ├── DataRetentionNoticeDialog.tsx # ⭐ modal แจ้งเตือนครั้งเดียวหลังล็อกอิน: ข้อมูลเก็บ 30 วันแล้วลบ (code-split)
-│   │   ├── TopBar.tsx / BottomNav.tsx  # nav ที่แชร์กัน (BottomNav = แถบล่าง mobile, admin เท่านั้น)
+│   │   ├── TopBar.tsx / BottomNav.tsx / AppFooter.tsx  # เฮดเดอร์ (โลโก้ DTC `public/DTC-Logo.png` + เส้นคั่น + ชื่อแอป, สูง h-16 คงที่ เพราะ SectionTabs sticky top-16) / แถบล่าง mobile (admin เท่านั้น) / ฟุตเตอร์ร่วม (ชื่อหน่วยงาน, ติดขอบล่างจอ)
 │   │   └── ui/             # shadcn/ui components — dialog.tsx/select.tsx ใช้ Radix, ไฟล์อื่นใช้ Base UI
 │   ├── models/             # ⭐ domain types/data — client-safe (ห้าม import server-only/prisma)
 │   │   ├── assessment.ts   # AssessmentRecord (มี groupId), CreateRecordInput, CreateRecordResult
@@ -93,7 +93,7 @@ nextjs-digital-hygiene/
 │   │   ├── cached-loader.ts # ⭐ cache ใน process (TTL + invalidate + กัน race) ของ listItems/listQuestions
 │   │   ├── signin-policy.ts # ⭐ นโยบายอนุญาต login (pure): อีเมล ASCII ล้วน, Google email_verified, gate โดเมน — ทดสอบด้วย node --experimental-strip-types
 │   │   ├── survey-validation.ts # ⭐ ตรวจคำตอบแบบประเมินฝั่งเซิร์ฟเวอร์ (คำถามจริง, คะแนน 1–5, ข้อความ ≤ 1000, ตัดอักขระ XML ผิดกฎ)
-│   │   ├── scoring.ts / storage-draft.ts  # คะแนนต่อหมวด / draft ช่อง GB ข้าม tab (useSyncExternalStore)
+│   │   ├── scoring.ts / storage-gb.ts / completion.ts  # คะแนนต่อหมวด / (storage-gb.ts = ตรวจ/แปลงค่า GB, completion.ts = ครบทุกหมวดหรือยัง)
 │   │   ├── theme.ts        # GROUP_THEME — ไอคอน+สีต่อหมวด (client-safe presentation helper)
 │   │   ├── utils.ts        # cn() (shadcn)
 │   │   └── generated/prisma/   # Prisma Client ที่ generate (gitignored)
@@ -274,10 +274,15 @@ checklist items เองผ่าน service ตรง ๆ แล้วส่�
   2. **พร้อม** → `AppHero` + **`SectionTabs`** (5 tab) + เนื้อหาหมวด: **การติ๊กเป็นระดับหมวดย่อย** (checkbox เดียวต่อ
      หมวดย่อย รายการใน accordion เป็นข้อมูลอ้างอิง/guide), คะแนนเป็น % ของ**หมวดนั้น** (`lib/scoring.ts` +
      `scoreFor` ใน `lib/format.ts`), ปุ่ม "เริ่มการวิเคราะห์ทันที" ไม่มี gating → `createRecord({groupId,…})`
-     **1 record ต่อการส่ง** (`gaps`/`selectedIds` = รายการที่ยังไม่ติ๊ก) → ผลแสดงใน **`Dialog`**; หมวด Cleanup มีช่อง GB
-     ก่อน/หลัง (เก็บข้าม tab ด้วย `lib/storage-draft.ts`); หมวดที่ไม่มี item → ข้อความ "ยังไม่มีรายการ" ปุ่มปิด;
+     **1 record ต่อการส่ง** (`gaps`/`selectedIds` = รายการที่ยังไม่ติ๊ก) → ผลแสดงใน **`Dialog`**; พื้นที่จัดเก็บ (GB) ไม่ได้กรอกในหมวดแล้ว —
+     ถามผ่านป๊อปอัพ 2 ครั้ง (ดู "พื้นที่จัดเก็บ" ด้านล่าง); หมวดที่ไม่มี item → ข้อความ "ยังไม่มีรายการ" ปุ่มปิด;
      admin เห็นลิงก์ `/admin` (TopBar + BottomNav); ปุ่ม "เปิดคู่มือ" แสดง `ChecklistItem.guide`
-- **`/survey` → `(app)/survey/page.tsx` → `SurveyPanel`** — เข้าได้เสมอ (ไม่ต้องทำครบ 4 หมวดก่อน)
+- **`/survey` → `(app)/survey/page.tsx` → `SurveyPanel`** — เข้าได้เสมอ (ไม่ต้องทำครบ 4 หมวดก่อน); ถ้าทำครบทุกหมวดแล้วแต่ยังไม่ตอบ
+  "พื้นที่หลังทำกิจกรรม" จะมีป๊อปอัพ `StorageAfterDialog` ถามและแสดงผลสรุป (ก่อน → หลัง → ผลต่าง) ก่อนแบบประเมิน
+- **พื้นที่จัดเก็บ (GB)** — เก็บที่ `User.storageBeforeGb/At` และ `storageAfterGb/At` (เขียนครั้งเดียว, "ก่อน" เขียนไม่ได้เมื่อมี "หลัง" แล้ว, เพดาน 16,384 GB, ค่าอยู่ใน session ไม่มี query เพิ่ม):
+  `StorageBeforeDialog` (mount โดย `(app)/EntryDialogs.tsx` เมื่อมีกองแต่ยังไม่ตอบ — ผู้ใช้ใหม่เห็นหลังเลือกกอง) และ `StorageAfterDialog`
+  บน `/survey` (ต้องทำครบทุกหมวด — เซิร์ฟเวอร์ตรวจซ้ำ); ปุ่ม "ไว้ทีหลัง" แค่ซ่อนชั่วคราว; retention 30 วันล้างค่า; `/admin` ดึงค่าไปใส่ใน
+  record Cleanup ล่าสุดของแต่ละอีเมล
   - **`DataRetentionNoticeDialog`** (ผ่าน `RetentionNoticeGate`, dynamic import) แสดงครั้งเดียวหลังล็อกอินถ้ายังไม่เคย
     รับทราบ
 - **`/privacy` → `privacy/page.tsx`** — หน้านโยบายความเป็นส่วนตัว (public, server component) — ข้อมูลที่
@@ -320,8 +325,7 @@ checklist items เองผ่าน service ตรง ๆ แล้วส่�
 `AssessmentRecord.selectedIds` เก่ายัง resolve เป็นชื่อได้ — ดูรายละเอียดใน `checklist.service.ts`
 
 ### Session
-จัดการโดย **Auth.js (database sessions, idle expiry 1 ชม.)** — ไม่มี `localStorage` (ยกเว้น draft ช่อง GB ของ
-Cleanup ใน `sessionStorage`). `app/session.ts` (`getSession`) เรียก `auth()` ให้ layout/page. กอง/หน่วยงานเก็บที่ `User.division` (เลือกครั้งเดียว). session ที่
+จัดการโดย **Auth.js (database sessions, idle expiry 1 ชม.)** — ไม่มี `localStorage`/`sessionStorage`. `app/session.ts` (`getSession`) เรียก `auth()` ให้ layout/page. กอง/หน่วยงานเก็บที่ `User.division` (เลือกครั้งเดียว). session ที่
 พังกลางทาง (เช่น หมดอายุระหว่าง action) จะ **บังคับ sign-out จริง** (server action `signOutAction` แล้ว `window.location.assign`
 กลับ tab เดิมพร้อม `?error=SessionExpired` ให้ `AuthErrorToast` แจ้ง) แทนแค่ refresh เพื่อให้ผู้ใช้กลับไปหน้าล็อกอินที่ทำงานได้แน่นอน. Feedback ใช้ `AlertDialog` (ยืนยันลบ) + `sonner`
 toast (`<Toaster/>` ใน `app/layout.tsx`)

@@ -2,9 +2,10 @@ import { getSession } from "@/app/session";
 import { AppTopBar } from "@/components/AppTopBar";
 import { AppHero } from "@/components/AppHero";
 import { SectionTabs } from "@/components/SectionTabs";
-import { RetentionNoticeGate } from "@/components/RetentionNoticeGate";
 import { BottomNav } from "@/components/BottomNav";
+import { AppFooter } from "@/components/AppFooter";
 import { DivisionGuard } from "./DivisionGuard";
+import { EntryDialogs } from "./EntryDialogs";
 
 // Shell for the 5 section pages (/cleanup, /security, /footprint, /backup, /survey):
 // top bar, and — once signed in with a division — the hero and tab navbar. A signed-in user
@@ -18,26 +19,25 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const showRetentionNotice = !user.retentionNoticeSeen;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
       <AppTopBar email={user.email} admin={user.isAdmin} />
 
       {division ? (
         <>
           <AppHero division={division} />
           <SectionTabs />
-          <main className="max-w-4xl mx-auto px-5 py-6 pb-24 sm:py-8 md:pb-14">
-            {children}
-            <footer className="py-12 mt-6 border-t border-slate-200 text-center">
-              <p className="text-slate-400 text-sm">© Digital Hygiene &amp; Safety First</p>
-              <p className="text-slate-300 text-[11px] mt-1.5">ล้างเครื่องให้ใส ใส่ใจภูมิคุ้มกันดิจิทัล</p>
-            </footer>
-          </main>
+          <main className="w-full max-w-4xl mx-auto px-5 py-6 sm:py-8 pb-10">{children}</main>
         </>
       ) : (
         <DivisionGuard user={user} />
       )}
 
-      {showRetentionNotice && <RetentionNoticeGate initial />}
+      <AppFooter clearBottomNav={user.isAdmin && !!division} />
+
+      <EntryDialogs
+        showNotice={showRetentionNotice}
+        askStorageBefore={!!division && user.storageBeforeGb == null && user.storageAfterGb == null}
+      />
       {user.isAdmin && division && <BottomNav current="app" />}
     </div>
   );

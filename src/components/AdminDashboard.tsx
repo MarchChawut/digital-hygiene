@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { Download, FolderArchive, ArrowLeft } from "lucide-react";
 
 import { TopBar } from "@/components/TopBar";
+import { AppFooter } from "@/components/AppFooter";
 import { BottomNav } from "@/components/BottomNav";
 import { SurveyAdmin } from "@/components/SurveyAdmin";
 import { ChecklistAdmin } from "@/components/ChecklistAdmin";
@@ -347,7 +348,7 @@ export default function AdminDashboard({
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
       <TopBar
         email={email}
         onSignOut={() => signOut({ callbackUrl: "/" })}
@@ -359,7 +360,7 @@ export default function AdminDashboard({
         }
       />
 
-      <main className="max-w-4xl mx-auto px-5 pt-6 pb-24 sm:pt-11 md:pb-10">
+      <main className="w-full max-w-4xl mx-auto px-5 pt-6 pb-10 sm:pt-11">
         <div className="flex flex-wrap gap-4 items-end justify-between mb-7">
           <div>
             <Badge className="bg-blue-50 text-blue-600 uppercase tracking-widest">ADMIN · BACK OFFICE</Badge>
@@ -664,6 +665,7 @@ export default function AdminDashboard({
         <SurveyAdmin initialQuestions={initialSurveyQuestions} />
         <AuditLogPanel initialEntries={auditLog} />
       </main>
+      <AppFooter clearBottomNav />
 
       <BottomNav current="admin" />
     </div>

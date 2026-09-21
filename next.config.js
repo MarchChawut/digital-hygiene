@@ -20,7 +20,12 @@ const nextConfig = {
   // Don't advertise the framework/version to scanners ("X-Powered-By: Next.js").
   poweredByHeader: false,
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // Files in public/ carry no content hash, so Next serves them with max-age=0 (revalidated on
+      // every page view); the logo changes rarely, so let browsers keep it for a day.
+      { source: "/DTC-Logo.png", headers: [{ key: "Cache-Control", value: "public, max-age=86400" }] },
+    ];
   },
   // Pin the file-tracing root to this project. Without this, a stray lockfile
   // in a parent directory makes Next.js walk up the tree (and on macOS that can
